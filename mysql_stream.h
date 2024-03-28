@@ -5,6 +5,7 @@
 #include "mysql_packet.h"
 #include "common.h"
 
+class Mysql_stream_manager;
 
 class Mysql_stream
 {
@@ -15,11 +16,14 @@ public:
     u_short dst_port;
     Mysql_packet* first;
     Mysql_packet* last;
+    Mysql_query_packet* last_query;
     u_char pkt_hdr[4];
     u_int cur_pkt_hdr_len;
 
-    Mysql_stream(u_int src_ip, u_short src_port, u_int dst_ip, u_short dst_port):
-    src_ip(src_ip),first(0),last(0),cur_pkt_hdr_len(0)
+    Mysql_stream_manager* sm;
+
+    Mysql_stream(Mysql_stream_manager* sm, u_int src_ip, u_short src_port, u_int dst_ip, u_short dst_port):
+    sm(sm),src_ip(src_ip),first(0),last(0),last_query(0),cur_pkt_hdr_len(0)
     {
     }
 
@@ -32,6 +36,7 @@ public:
     void append(struct timeval ts, const u_char* data, u_int len, bool in);
     void cleanup();
     int create_new_packet(struct timeval ts, const u_char** data, u_int* len, bool in);
+    void handle_packet_complete();
 
 };
 #endif

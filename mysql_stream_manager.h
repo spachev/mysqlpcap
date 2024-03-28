@@ -2,9 +2,16 @@
 #define MYSQL_STREAM_MANAGER_H
 
 #include <map>
+#include <set>
 #include <pcap.h>
 
 #include "mysql_stream.h"
+#include "mysql_packet.h"
+
+struct stats_info
+{
+    u_int n_slow_queries;
+};
 
 class Mysql_stream_manager
 {
@@ -12,8 +19,11 @@ public:
     u_int mysql_ip;
     u_int mysql_port;
     std::map<u_longlong, Mysql_stream*> lookup;
+    std::set<Mysql_query_packet*, Mysql_query_packet_time_cmp> slow_queries;
+    stats_info* info;
 
-    Mysql_stream_manager(u_int mysql_ip, u_int mysql_port) : mysql_ip(mysql_ip), mysql_port(mysql_port) {}
+    Mysql_stream_manager(u_int mysql_ip, u_int mysql_port, stats_info* info) : mysql_ip(mysql_ip), mysql_port(mysql_port),
+        info(info){}
     ~Mysql_stream_manager() { cleanup();}
 
     static u_longlong get_key(u_int dst_ip, u_int dst_port)
@@ -22,6 +32,8 @@ public:
     }
 
     void process_pkt(const struct pcap_pkthdr* header, const u_char* packet);
+    void register_query(Mysql_query_packet* query);
+    void print_slow_queries();
     void cleanup();
 };
 

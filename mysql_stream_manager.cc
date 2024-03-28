@@ -104,7 +104,7 @@ void Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u
     {
         if (!(tcp_header->th_flags & TH_SYN))
             return; // igore streams if we join in the middle of a conversation
-        s = new Mysql_stream(ip_header->ip_src.s_addr, tcp_header->th_sport,
+        s = new Mysql_stream(this, ip_header->ip_src.s_addr, tcp_header->th_sport,
                              ip_header->ip_dst.s_addr, tcp_header->th_dport);
         lookup[key] = s;
     }
@@ -124,4 +124,29 @@ void Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u
 
     DEBUG_MSG("key=%llu in=%d len=%u flags=%u", key, in, len, tcp_header->th_flags);
     s->append(header->ts, data, len, in);
+}
+
+void Mysql_stream_manager::register_query(Mysql_query_packet* query)
+{
+    slow_queries.insert(query);
+    query->mark_ref();
+
+    if (slow_queries.size() > info->n_slow_queries)
+    {
+        std::set<Mysql_query_packet*>::iterator it = --slow_queries.end();
+        Mysql_query_packet* p = *it;
+        slow_queries.erase(it);
+        if (p->unmark_ref())
+            delete p;
+    }
+}
+
+void Mysql_stream_manager::print_slow_queries()
+{
+    for (std::set<Mysql_query_packet*>::iterator it = slow_queries.begin();
+         it != slow_queries.end(); it++)
+    {
+        Mysql_query_packet* p = *it;
+        p->print_query();
+    }
 }

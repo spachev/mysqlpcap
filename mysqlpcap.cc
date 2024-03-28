@@ -16,12 +16,14 @@ static struct option long_options[] =
           {"input",    required_argument, 0, 'i'},
           {"port",     required_argument, 0, 'p'},
           {"ip",       required_argument, 0, 'h'},
+          {"print-n-slow", required_argument, 0, 'n'},
           {0, 0, 0, 0}
         };
 
 static const char* fname = NULL;
 static u_int mysql_port = 3306;
 static struct in_addr mysql_ip;
+static stats_info info;
 
 void die(const char* msg, ...)
 {
@@ -42,7 +44,7 @@ void parse_args(int argc, char** argv)
     while (1)
     {
         int option_index = 0;
-        int c = getopt_long (argc, argv, "i:p:h:",
+        int c = getopt_long (argc, argv, "i:p:n:h:",
                        long_options, &option_index);
 
         if (c == -1)
@@ -59,6 +61,9 @@ void parse_args(int argc, char** argv)
             case 'h':
                 if (!inet_aton(optarg, &mysql_ip))
                     die("Invalid IP: %s", optarg);
+                break;
+            case 'n':
+                info.n_slow_queries = atoi(optarg);
                 break;
         }
 
@@ -88,7 +93,7 @@ void process_file(const char* fname)
     if (pcap_setfilter(ph, &filter) == -1)
         PCAP_DIE("pcap_setfilter");
 
-    Mysql_stream_manager sm(mysql_ip.s_addr, mysql_port);
+    Mysql_stream_manager sm(mysql_ip.s_addr, mysql_port, &info);
 
     while (1)
     {
@@ -109,10 +114,12 @@ void process_file(const char* fname)
     }
 
     pcap_close(ph);
+    sm.print_slow_queries();
 }
 
 int main(int argc, char** argv)
 {
+    info.n_slow_queries = 0;
     parse_args(argc, argv);
     process_file(fname);
     return 0;
