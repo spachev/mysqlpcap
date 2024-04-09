@@ -1,4 +1,5 @@
 #include <string.h>
+#include <netinet/in.h>
 
 #include "common.h"
 #include "mysql_stream_manager.h"
@@ -45,9 +46,6 @@ struct sniff_tcp {
         u_short th_urp;                 /* urgent pointer */
 };
 
-static const int ETH_HEADER_LEN = 14;
-
-
 void Mysql_stream_manager::cleanup()
 {
     for (std::map<u_longlong, Mysql_stream*>::iterator it = lookup.begin(); it != lookup.end(); it++)
@@ -59,12 +57,12 @@ void Mysql_stream_manager::cleanup()
 }
 
 // Our filter ensures we get a valid TCP packet, so we skip the checks
-static const struct sniff_tcp* get_tcp_header(const u_char* packet, int* tcp_header_len)
+static const struct sniff_tcp* get_tcp_header(struct param_info* info, const u_char* packet, int* tcp_header_len)
 {
     int ip_header_len;
     const u_char *ip_header;
     const u_char *tcp_header;
-    ip_header = packet + ETH_HEADER_LEN;
+    ip_header = packet + info->ethernet_header_size;
     ip_header_len = ((*ip_header) & 0x0F);
     ip_header_len *= 4;
     tcp_header = ip_header + ip_header_len;
@@ -74,26 +72,62 @@ static const struct sniff_tcp* get_tcp_header(const u_char* packet, int* tcp_hea
     return (const struct sniff_tcp*)tcp_header;
 }
 
-static const struct sniff_ip* get_ip_header(const u_char* packet)
+static const struct sniff_ip* get_ip_header(struct param_info* info, const u_char* packet)
 {
-    const u_char* ip_header = packet + ETH_HEADER_LEN;
+    const u_char* ip_header = packet + info->ethernet_header_size;
     return (const struct sniff_ip*)ip_header;
 }
 
+char *strncasestr(const char *haystack, const char *needle, size_t len)
+{
+    int i;
+    size_t needle_len;
+
+    if (0 == (needle_len = strnlen(needle, len)))
+            return (char *)haystack;
+
+    for (i=0; i<=(int)(len-needle_len); i++)
+    {
+            if ((tolower(haystack[0]) == tolower(needle[0])) &&
+                    (0 == strncasecmp(haystack, needle, needle_len)))
+                    return (char *)haystack;
+
+            haystack++;
+    }
+    return NULL;
+}
+
+static bool could_be_query(const u_char* data, u_int len)
+{
+    const char* haystack = (char*)data + 4; // at this point could be invalid
+    size_t cmp_len = len - 4;
+    return len > 4 && data[3] == 0x3 && (strncasestr(haystack, "select", cmp_len) ||
+        strncasestr(haystack, "update", cmp_len) ||
+        strncasestr(haystack, "delete", cmp_len) ||
+        strncasestr(haystack, "alter", cmp_len) ||
+        strncasestr(haystack, "call", cmp_len)
+    );
+}
 
 void Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u_char* packet)
 {
     int tcp_header_len;
-    const struct sniff_tcp* tcp_header = get_tcp_header(packet, &tcp_header_len);
+    const struct sniff_ip* ip_header = get_ip_header(info, packet);
+    if (header->caplen < (char*)ip_header + sizeof(*ip_header) - (char*)packet ||
+        ip_header->ip_p != 6 /* tcp */)
+            return;
+
+    const struct sniff_tcp* tcp_header = get_tcp_header(info, packet, &tcp_header_len);
     const u_char* data = (const u_char*)tcp_header + tcp_header_len;
-    const struct sniff_ip* ip_header = get_ip_header(packet);
-    bool in = (ip_header->ip_dst.s_addr == mysql_ip);
+    bool in = (ntohl(ip_header->ip_dst.s_addr) == ntohl(mysql_ip));
     u_int len;
 
     if (header->caplen < (char*)data - (char*)packet)
         return; //skip weird packets
 
     len = header->caplen - ((char*)data - (char*)packet);
+    if (ntohs(tcp_header->th_sport) != mysql_port && ntohs(tcp_header->th_dport) != mysql_port)
+        return;
 
     u_longlong key = in ? get_key(ip_header->ip_src.s_addr, tcp_header->th_sport) :
         get_key(ip_header->ip_dst.s_addr, tcp_header->th_dport);
@@ -102,7 +136,7 @@ void Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u
     std::map<u_longlong, Mysql_stream*>::iterator it;
     if ((it = lookup.find(key)) == lookup.end())
     {
-        if (!(tcp_header->th_flags & TH_SYN))
+        if (!(tcp_header->th_flags & TH_SYN) && !in && !could_be_query(data, len))
             return; // igore streams if we join in the middle of a conversation
         s = new Mysql_stream(this, ip_header->ip_src.s_addr, tcp_header->th_sport,
                              ip_header->ip_dst.s_addr, tcp_header->th_dport);

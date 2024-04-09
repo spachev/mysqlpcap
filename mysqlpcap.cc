@@ -17,13 +17,15 @@ static struct option long_options[] =
           {"port",     required_argument, 0, 'p'},
           {"ip",       required_argument, 0, 'h'},
           {"print-n-slow", required_argument, 0, 'n'},
+          {"ethernet-header-size", required_argument, 0, 'e'},
           {0, 0, 0, 0}
         };
 
 static const char* fname = NULL;
 static u_int mysql_port = 3306;
+static u_int ethernet_header_size = 14;
 static struct in_addr mysql_ip;
-static stats_info info;
+static param_info info;
 
 void die(const char* msg, ...)
 {
@@ -44,7 +46,7 @@ void parse_args(int argc, char** argv)
     while (1)
     {
         int option_index = 0;
-        int c = getopt_long (argc, argv, "i:p:n:h:",
+        int c = getopt_long (argc, argv, "i:p:n:h:e:",
                        long_options, &option_index);
 
         if (c == -1)
@@ -62,6 +64,9 @@ void parse_args(int argc, char** argv)
                 if (!inet_aton(optarg, &mysql_ip))
                     die("Invalid IP: %s", optarg);
                 break;
+            case 'e':
+                info.ethernet_header_size = atoi(optarg);
+                break;
             case 'n':
                 info.n_slow_queries = atoi(optarg);
                 break;
@@ -78,21 +83,13 @@ void parse_args(int argc, char** argv)
 void process_file(const char* fname)
 {
     char error_buffer[PCAP_ERRBUF_SIZE];
-    struct bpf_program filter;
-    char filter_expr[128];
     pcap_t *ph = pcap_open_offline(fname, error_buffer);
     unsigned long long n_packets = 0;
 
     if (!ph)
         PCAP_DIE("pcap_open_offline");
 
-    snprintf(filter_expr, sizeof(filter_expr), "host %s and port %u and tcp", inet_ntoa(mysql_ip), mysql_port
-             );
-    if (pcap_compile(ph, &filter, filter_expr, 0, 0) == -1)
-        PCAP_DIE("pcap_compile");
-    if (pcap_setfilter(ph, &filter) == -1)
-        PCAP_DIE("pcap_setfilter");
-
+    // no filter, does not work if the packets have vlan ID in the ethernet header
     Mysql_stream_manager sm(mysql_ip.s_addr, mysql_port, &info);
 
     while (1)
