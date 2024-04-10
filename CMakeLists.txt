@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.11)
 project(mysqlpcap)
-set(CMAKE_CXX_FLAGS "--std=c++11 -g -O3")
+set(CMAKE_CXX_FLAGS "--std=c++11 -g -O3 ${CMAKE_CXX_FLAGS}")
 add_executable(mysqlpcap mysqlpcap.cc mysql_stream.cc mysql_packet.cc mysql_stream_manager.cc)
 target_link_libraries(mysqlpcap -lpcap)
