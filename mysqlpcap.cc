@@ -10,6 +10,21 @@
 #include "common.h"
 #include "mysql_stream_manager.h"
 
+enum {
+    REPLAY_HOST=240,
+    REPLAY_PORT,
+    REPLAY_USER,
+    REPLAY_PW,
+    REPLAY_DB
+};
+
+const char* replay_host = 0;
+const char* replay_user = 0;
+const char* replay_pw = 0;
+const char* replay_db = 0;
+
+uint replay_port = 3306;
+uint mysql_port = 3306;
 
 static struct option long_options[] =
         {
@@ -18,12 +33,19 @@ static struct option long_options[] =
           {"ip",       required_argument, 0, 'h'},
           {"print-n-slow", required_argument, 0, 'n'},
           {"ethernet-header-size", required_argument, 0, 'e'},
+          {"explain", required_argument, 0, 'E'},
+          {"analyze", required_argument, 0, 'A'},
+          {"run", required_argument, 0, 'R'},
+          {"replay-host", required_argument, 0, REPLAY_HOST},
+          {"replay-port", required_argument, 0, REPLAY_PORT},
+          {"replay-user", required_argument, 0, REPLAY_USER},
+          {"replay-pw", required_argument, 0, REPLAY_PW},
+          {"replay-host", required_argument, 0, REPLAY_HOST},
+          {"replay-db", required_argument, 0, REPLAY_DB},
           {0, 0, 0, 0}
         };
 
 static const char* fname = NULL;
-static u_int mysql_port = 3306;
-static u_int ethernet_header_size = 14;
 static struct in_addr mysql_ip;
 static param_info info;
 
@@ -46,7 +68,7 @@ void parse_args(int argc, char** argv)
     while (1)
     {
         int option_index = 0;
-        int c = getopt_long (argc, argv, "i:p:n:h:e:",
+        int c = getopt_long (argc, argv, "i:p:n:h:e:EAR",
                        long_options, &option_index);
 
         if (c == -1)
@@ -67,9 +89,35 @@ void parse_args(int argc, char** argv)
             case 'e':
                 info.ethernet_header_size = atoi(optarg);
                 break;
+            case 'E':
+                info.do_explain = true;
+                break;
+            case 'A':
+                info.do_analyze = true;
+                break;
+            case 'R':
+                info.do_run = true;
+                break;
             case 'n':
                 info.n_slow_queries = atoi(optarg);
                 break;
+            case REPLAY_HOST:
+                replay_host = optarg;
+                break;
+            case REPLAY_USER:
+                replay_user = optarg;
+                break;
+            case REPLAY_PW:
+                replay_pw = optarg;
+                break;
+            case REPLAY_DB:
+                replay_db = optarg;
+                break;
+            case REPLAY_PORT:
+                replay_port = atoi(optarg);
+                break;
+            default:
+                die("Invalid option -%c", c);
         }
 
     }

@@ -2,6 +2,7 @@
 #define MYSQL_STREAM_H
 
 #include <pcap.h>
+#include <mysql.h>
 #include "mysql_packet.h"
 #include "common.h"
 
@@ -21,6 +22,7 @@ public:
     u_int cur_pkt_hdr_len;
 
     Mysql_stream_manager* sm;
+    MYSQL con;
 
     Mysql_stream(Mysql_stream_manager* sm, u_int src_ip, u_short src_port, u_int dst_ip, u_short dst_port):
     sm(sm),src_ip(src_ip),first(0),last(0),last_query(0),cur_pkt_hdr_len(0)

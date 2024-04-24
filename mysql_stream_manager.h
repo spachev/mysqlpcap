@@ -4,6 +4,7 @@
 #include <map>
 #include <set>
 #include <pcap.h>
+#include <mysql.h>
 
 #include "mysql_stream.h"
 #include "mysql_packet.h"
@@ -12,6 +13,14 @@ struct param_info
 {
     u_int n_slow_queries;
     u_int ethernet_header_size;
+    bool do_explain;
+    bool do_analyze;
+    bool do_run;
+
+    param_info():n_slow_queries(0), ethernet_header_size(14), do_explain(0),
+        do_analyze(0), do_run(0)
+    {
+    }
 };
 
 class Mysql_stream_manager
@@ -22,9 +31,10 @@ public:
     std::map<u_longlong, Mysql_stream*> lookup;
     std::set<Mysql_query_packet*, Mysql_query_packet_time_cmp> slow_queries;
     param_info* info;
+    MYSQL* explain_con;
 
     Mysql_stream_manager(u_int mysql_ip, u_int mysql_port, param_info* info) : mysql_ip(mysql_ip), mysql_port(mysql_port),
-        info(info){}
+        info(info), explain_con(NULL){}
     ~Mysql_stream_manager() { cleanup();}
 
     static u_longlong get_key(u_int dst_ip, u_int dst_port)
@@ -34,7 +44,9 @@ public:
 
     void process_pkt(const struct pcap_pkthdr* header, const u_char* packet);
     void register_query(Mysql_query_packet* query);
+    void explain_query(Mysql_query_packet* query, bool analyze);
     void print_slow_queries();
+    bool connect_for_explain();
     void cleanup();
 };
 

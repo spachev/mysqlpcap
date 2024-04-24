@@ -1,8 +1,16 @@
 #include <string.h>
 #include <netinet/in.h>
+#include <mysql.h>
 
 #include "common.h"
 #include "mysql_stream_manager.h"
+
+extern const char* replay_host;
+extern const char* replay_user;
+extern const char* replay_pw;
+extern const char* replay_db;
+extern uint replay_port;
+
 
 /* IP header */
 struct sniff_ip {
@@ -54,7 +62,81 @@ void Mysql_stream_manager::cleanup()
     }
 
     lookup.clear();
+
+    if (explain_con)
+    {
+        mysql_close(explain_con);
+        explain_con = 0;
+    }
 }
+
+bool Mysql_stream_manager::connect_for_explain()
+{
+    if (!(explain_con = mysql_init(NULL)))
+    {
+        fprintf(stderr, "Error initializing explain connection\n");
+        return false;
+    }
+
+    if (!mysql_real_connect(explain_con, replay_host, replay_user, replay_pw, replay_db,
+        replay_port, NULL, 0))
+    {
+        fprintf(stderr, "Error connecting for explain: %s", mysql_error(explain_con));
+        mysql_close(explain_con);
+        explain_con = 0;
+    }
+
+    return true;
+}
+
+void Mysql_stream_manager::explain_query(Mysql_query_packet* query, bool analyze)
+{
+    const char* explain_str = analyze ? "analyze format=json " : "explain ";
+    u_int explain_str_len = strlen(explain_str);
+    u_int q_len = query->query_len();
+    u_int buf_len = query->query_len() + explain_str_len + 1;
+    char* buf = new char[buf_len];
+    char* p = buf;
+    memcpy(p, explain_str, explain_str_len);
+    p += explain_str_len;
+    memcpy(p, query->query(), q_len);
+    p += q_len;
+    *p = 0;
+
+    MYSQL_RES* res = 0;
+    MYSQL_ROW row = 0;
+    uint num_fields = 0;
+    MYSQL_FIELD* fields = 0;
+
+    if (mysql_real_query(explain_con, buf, buf_len - 1))
+    {
+        fprintf(stderr, "Error explaining query: %s : %s\n", buf, mysql_error(explain_con));
+        goto err;
+    }
+
+    if (!(res = mysql_store_result(explain_con)))
+    {
+        fprintf(stderr, "Error explaining query: %s : could not store result\n", buf);
+        goto err;
+    }
+
+    num_fields = mysql_num_fields(res);
+    fields = mysql_fetch_fields(res);
+
+    while ((row = mysql_fetch_row(res)))
+    {
+        for (uint i = 0; i < num_fields; i++)
+        {
+            printf("%s: %s\n", fields[i].name, row[i] ? row[i] : "NULL");
+        }
+    }
+
+err:
+    if (res)
+        mysql_free_result(res);
+    delete[] buf;
+}
+
 
 // Our filter ensures we get a valid TCP packet, so we skip the checks
 static const struct sniff_tcp* get_tcp_header(struct param_info* info, const u_char* packet, int* tcp_header_len)
@@ -119,7 +201,8 @@ void Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u
 
     const struct sniff_tcp* tcp_header = get_tcp_header(info, packet, &tcp_header_len);
     const u_char* data = (const u_char*)tcp_header + tcp_header_len;
-    bool in = (ntohl(ip_header->ip_dst.s_addr) == ntohl(mysql_ip));
+    bool in = (ntohl(ip_header->ip_dst.s_addr) == ntohl(mysql_ip) &&
+        ntohs(tcp_header->th_dport) == mysql_port);
     u_int len;
 
     if (header->caplen < (char*)data - (char*)packet)
@@ -177,10 +260,22 @@ void Mysql_stream_manager::register_query(Mysql_query_packet* query)
 
 void Mysql_stream_manager::print_slow_queries()
 {
+    if (info->do_explain || info->do_analyze)
+    {
+        if (!connect_for_explain())
+        {
+            fprintf(stderr, "Cannot do EXPLAIN/ANALYZE, no connectinn\n");
+            // we can still print the queries
+        }
+    }
+
     for (std::set<Mysql_query_packet*>::iterator it = slow_queries.begin();
          it != slow_queries.end(); it++)
     {
         Mysql_query_packet* p = *it;
         p->print_query();
+
+        if ((info->do_explain || info->do_analyze) && explain_con)
+            explain_query(p, info->do_analyze);
     }
 }
