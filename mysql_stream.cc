@@ -4,9 +4,125 @@
 #include "mysql_stream.h"
 #include "mysql_stream_manager.h"
 
+void Mysql_stream::start_replay()
+{
+  th = new std::thread(&Mysql_stream::run_replay, this);
+}
+
+void Mysql_stream::end_replay()
+{
+  if (!th)
+    return;
+
+  eof_lock.lock();
+  reached_eof = 1;
+  eof_cond.notify_one();
+  eof_lock.unlock();
+  th->join();
+  delete th;
+  th = 0;
+}
+
+void Mysql_stream::run_replay()
+{
+  if (!db_connect())
+    return;
+
+  lock.lock();
+  Mysql_packet* p = first;
+  lock.unlock();
+
+  if (!p)
+    return;
+
+  for (;;)
+  {
+    if (p->is_query())
+      db_query((Mysql_query_packet*)p);
+
+    lock.lock();
+    if (p->next)
+    {
+      p = p->next;
+      lock.unlock();
+      continue;
+    }
+
+    std::unique_lock<std::mutex> lk(eof_lock);
+
+    while (!p->next && !reached_eof)
+    {
+      eof_cond.wait(lk);
+    }
+
+    if (reached_eof)
+    {
+      db_close();
+      return;
+    }
+
+    p = p->next;
+  }
+}
+
+bool Mysql_stream::db_connect()
+{
+  if (!(con = mysql_init(NULL)))
+  {
+    fprintf(stderr, "Error initializing stream replay connection\n");
+    return false;
+  }
+
+  if (!mysql_real_connect(con, replay_host, replay_user, replay_pw, replay_db,
+      replay_port, NULL, 0))
+  {
+    fprintf(stderr, "Error connecting for replay: %s", mysql_error(con));
+    mysql_close(con);
+    con = 0;
+    return false;
+  }
+
+  return true;
+}
+
+void Mysql_stream::db_close()
+{
+  mysql_close(con);
+  con = 0;
+}
+
+bool Mysql_stream::db_query(Mysql_query_packet* query_pkt)
+{
+  // TODO: record stats
+  MYSQL_RES* res = 0;
+  MYSQL_ROW row = 0;
+  const char* query = query_pkt->query();
+  u_int q_len = query_pkt->query_len();
+  bool ret = false;
+
+  if (mysql_real_query(con, query, q_len) || !(res = mysql_use_result(con)))
+  {
+    fprintf(stderr, "Error running query: %*.s : %s\n", q_len, query, mysql_error(con));
+    goto err;
+  }
+
+  while ((row = mysql_fetch_row(res)))
+  {
+  }
+
+  ret = true;
+err:
+  if (res)
+    mysql_free_result(res);
+
+  return ret;
+}
+
 
 void Mysql_stream::append(struct timeval ts, const u_char* data, u_int len, bool in)
 {
+  std::lock_guard<std::mutex> guard(lock);
+
   while (len)
   {
     if (!last || last->is_complete())
@@ -76,6 +192,9 @@ int Mysql_stream::create_new_packet(struct timeval ts, const u_char** data, u_in
 
 void Mysql_stream::handle_packet_complete()
 {
+  eof_lock.lock();
+  eof_cond.notify_one();
+  eof_lock.unlock();
   //last->print();
   if (last->is_query())
   {

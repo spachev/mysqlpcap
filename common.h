@@ -3,6 +3,13 @@
 
 #include <exception>
 #include <assert.h>
+#include <mysql.h>
+
+extern const char* replay_host;
+extern const char* replay_user;
+extern const char* replay_pw;
+extern const char* replay_db;
+extern uint replay_port;
 
 class Base_exception: public std::exception
 {

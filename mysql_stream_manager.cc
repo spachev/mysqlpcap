@@ -5,12 +5,6 @@
 #include "common.h"
 #include "mysql_stream_manager.h"
 
-extern const char* replay_host;
-extern const char* replay_user;
-extern const char* replay_pw;
-extern const char* replay_db;
-extern uint replay_port;
-
 
 /* IP header */
 struct sniff_ip {
@@ -224,12 +218,17 @@ void Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u
         s = new Mysql_stream(this, ip_header->ip_src.s_addr, tcp_header->th_sport,
                              ip_header->ip_dst.s_addr, tcp_header->th_dport);
         lookup[key] = s;
+
+        if (info->do_run)
+            s->start_replay();
     }
     else
     {
         s = it->second;
         if (tcp_header->th_flags & (TH_RST | TH_FIN))
         {
+            if (info->do_run)
+                s->end_replay();
             lookup.erase(it);
             delete s;
             return;
