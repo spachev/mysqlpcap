@@ -1,4 +1,5 @@
 #include <string.h>
+#include <chrono>
 
 #include "common.h"
 #include "mysql_stream.h"
@@ -99,6 +100,7 @@ bool Mysql_stream::db_query(Mysql_query_packet* query_pkt)
   const char* query = query_pkt->query();
   u_int q_len = query_pkt->query_len();
   bool ret = false;
+  auto start = std::chrono::high_resolution_clock::now();
 
   if (mysql_real_query(con, query, q_len) || !(res = mysql_use_result(con)))
   {
@@ -115,6 +117,13 @@ err:
   if (res)
     mysql_free_result(res);
 
+  auto end = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double> elapsed = end - start;
+  char lookup_key[1024];
+  size_t lookup_key_len = sizeof(lookup_key) - 1;
+  sm->get_query_key(lookup_key, &lookup_key_len, query, q_len);
+  lookup_key[lookup_key_len] = 0;
+  sm->q_stats.record_query(lookup_key, elapsed.count());
   return ret;
 }
 

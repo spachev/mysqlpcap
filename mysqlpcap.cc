@@ -42,6 +42,7 @@ static struct option long_options[] =
           {"replay-pw", required_argument, 0, REPLAY_PW},
           {"replay-host", required_argument, 0, REPLAY_HOST},
           {"replay-db", required_argument, 0, REPLAY_DB},
+          {"query-pattern-regex", required_argument, 0, 'q'},
           {0, 0, 0, 0}
         };
 
@@ -60,7 +61,6 @@ void die(const char* msg, ...)
     exit(1);
 }
 
-
 void parse_args(int argc, char** argv)
 {
     inet_aton("127.0.0.1", &mysql_ip);
@@ -68,7 +68,7 @@ void parse_args(int argc, char** argv)
     while (1)
     {
         int option_index = 0;
-        int c = getopt_long (argc, argv, "i:p:n:h:e:EAR",
+        int c = getopt_long (argc, argv, "i:p:n:h:e:EARq:",
                        long_options, &option_index);
 
         if (c == -1)
@@ -116,6 +116,9 @@ void parse_args(int argc, char** argv)
             case REPLAY_PORT:
                 replay_port = atoi(optarg);
                 break;
+            case 'q':
+                info.add_query_pattern(optarg);
+                break;
             default:
                 die("Invalid option -%c", c);
         }
@@ -160,12 +163,23 @@ void process_file(const char* fname)
 
     pcap_close(ph);
     sm.print_slow_queries();
+
+    if (info.do_run)
+        sm.finish_replay();
 }
 
 int main(int argc, char** argv)
 {
     info.n_slow_queries = 0;
-    parse_args(argc, argv);
+    try
+    {
+        parse_args(argc, argv);
+    }
+    catch (std::exception e)
+    {
+        die("Error parsing arguments: %s\n", e.what());
+    }
+
     process_file(fname);
     return 0;
 }

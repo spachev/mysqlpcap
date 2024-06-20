@@ -1,9 +1,11 @@
+#include <iostream>
 #include <string.h>
 #include <netinet/in.h>
 #include <mysql.h>
 
 #include "common.h"
 #include "mysql_stream_manager.h"
+
 
 
 /* IP header */
@@ -225,6 +227,7 @@ void Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u
     else
     {
         s = it->second;
+        // TODO: this throttles the benchmark, figure out how to make it better
         if (tcp_header->th_flags & (TH_RST | TH_FIN))
         {
             if (info->do_run)
@@ -278,3 +281,137 @@ void Mysql_stream_manager::print_slow_queries()
             explain_query(p, info->do_analyze);
     }
 }
+
+void Mysql_stream_manager::get_query_key(char* key_buf, size_t* key_buf_len, const char* query, size_t q_len)
+{
+    for (size_t i = 0; i < info->query_patterns.size(); i++)
+    {
+        const char* key = info->query_patterns[i]->apply(query, q_len, key_buf, key_buf_len);
+        if (key)
+        {
+            key_buf[*key_buf_len] = 0;
+            return;
+        }
+    }
+
+    *key_buf_len = 0;
+    *key_buf = 0;
+}
+
+void Query_stats::print()
+{
+    std::cout << "Overall N: " << n_queries << " total time " << total_exec_time << std:: endl;
+
+    for (std::map<std::string, Query_pattern_stats*>::iterator it = lookup.begin();
+            it != lookup.end(); it++)
+    {
+        Query_pattern_stats* s = it->second;
+        std::cout << "Query Pattern ID: " << it->first << "N: " << s->n_queries << " min: "
+            << s->min_exec_time << "s max: " << s->max_exec_time << "s" << std::endl;
+    }
+
+}
+
+void Query_pattern_stats::record_query(double exec_time)
+{
+    n_queries++;
+    total_exec_time += exec_time;
+    if (exec_time < min_exec_time)
+        min_exec_time = exec_time;
+    if (exec_time > max_exec_time)
+        max_exec_time = exec_time;
+}
+
+void Query_stats::record_query(const char* lookup_key, double exec_time)
+{
+    std::lock_guard<std::mutex> guard(lock);
+    std::map<std::string, Query_pattern_stats*>::iterator it;
+    Query_pattern_stats* s;
+    if ((it = lookup.find(lookup_key)) == lookup.end())
+    {
+        s = lookup[lookup_key] = new Query_pattern_stats();
+    }
+    else
+    {
+        s = it->second;
+    }
+
+    n_queries++;
+    total_exec_time += exec_time;
+    s->record_query(exec_time);
+}
+
+void Mysql_stream_manager::finish_replay()
+{
+    for (std::map<u_longlong, Mysql_stream*>::iterator it = lookup.begin(); it != lookup.end(); it++)
+    {
+        Mysql_stream* s = it->second;
+        s->end_replay();
+    }
+
+    q_stats.print();
+}
+
+
+#define MAX_PATTERN_LEN 8192
+
+void parse_re_part(char* output, const char** argp, const char* arg_end)
+{
+    bool in_esc = false;
+    char* p = output;
+    const char* arg = *argp;
+
+    for (; arg < arg_end;)
+    {
+        if (in_esc)
+        {
+            *p++ = *arg++;
+            continue;
+        }
+
+        char c = *arg;
+
+        switch (c)
+        {
+            case '\\':
+                in_esc = 1;
+                arg++;
+                continue;
+            case '/':
+                arg++;
+                goto done;
+            default:
+                *p++ = *arg++;
+                continue;
+        }
+    }
+
+done:
+    *p = 0;
+    *argp = arg;
+    return;
+}
+
+void param_info::add_query_pattern(const char* arg)
+{
+    if (*arg == 's')
+        arg++;
+    if (*arg == '/')
+        arg++;
+
+    size_t arg_len = strlen(arg);
+    if (arg_len > MAX_PATTERN_LEN)
+        arg_len = MAX_PATTERN_LEN;
+
+    const char* arg_end = arg + arg_len;
+    char search[arg_len + 1];
+    char replace[arg_len + 1];
+
+    parse_re_part(search, &arg, arg_end);
+    parse_re_part(replace, &arg, arg_end);
+
+    Query_pattern* qp = new Query_pattern(search, replace);
+    query_patterns.push_back(qp);
+    //printf("search: %s replace: %s\n", search, replace);
+}
+
