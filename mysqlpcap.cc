@@ -15,7 +15,8 @@ enum {
     REPLAY_PORT,
     REPLAY_USER,
     REPLAY_PW,
-    REPLAY_DB
+    REPLAY_DB,
+    REPLAY_SPEED,
 };
 
 const char* replay_host = 0;
@@ -23,8 +24,10 @@ const char* replay_user = 0;
 const char* replay_pw = 0;
 const char* replay_db = 0;
 
+
 uint replay_port = 3306;
 uint mysql_port = 3306;
+double replay_speed = 1.0;
 
 static struct option long_options[] =
         {
@@ -42,6 +45,7 @@ static struct option long_options[] =
           {"replay-pw", required_argument, 0, REPLAY_PW},
           {"replay-host", required_argument, 0, REPLAY_HOST},
           {"replay-db", required_argument, 0, REPLAY_DB},
+          {"replay-speed", required_argument, 0, REPLAY_SPEED},
           {"query-pattern-regex", required_argument, 0, 'q'},
           {0, 0, 0, 0}
         };
@@ -116,6 +120,9 @@ void parse_args(int argc, char** argv)
             case REPLAY_PORT:
                 replay_port = atoi(optarg);
                 break;
+            case REPLAY_SPEED:
+                replay_speed = atof(optarg);
+                break;
             case 'q':
                 info.add_query_pattern(optarg);
                 break;
@@ -142,6 +149,7 @@ void process_file(const char* fname)
 
     // no filter, does not work if the packets have vlan ID in the ethernet header
     Mysql_stream_manager sm(mysql_ip.s_addr, mysql_port, &info);
+    sm.init_replay();
 
     while (1)
     {

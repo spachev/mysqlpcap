@@ -66,6 +66,12 @@ void Mysql_stream_manager::cleanup()
     }
 }
 
+void Mysql_stream_manager::init_replay()
+{
+    if (info->do_run)
+        replay_start_ts = std::chrono::high_resolution_clock::now();
+}
+
 bool Mysql_stream_manager::connect_for_explain()
 {
     if (!(explain_con = mysql_init(NULL)))
@@ -213,6 +219,7 @@ void Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u
 
     Mysql_stream *s;
     std::map<u_longlong, Mysql_stream*>::iterator it;
+
     if ((it = lookup.find(key)) == lookup.end())
     {
         if (!(tcp_header->th_flags & TH_SYN) && !in && !could_be_query(data, len))

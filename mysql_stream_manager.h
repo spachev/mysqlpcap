@@ -11,6 +11,7 @@
 #include "query_pattern.h"
 #include <vector>
 #include <float.h>
+#include <chrono>
 
 struct Query_pattern_stats
 {
@@ -76,7 +77,7 @@ public:
     param_info* info;
     MYSQL* explain_con;
     Query_stats q_stats;
-
+    std::chrono::time_point<std::chrono::high_resolution_clock> replay_start_ts;
 
     Mysql_stream_manager(u_int mysql_ip, u_int mysql_port, param_info* info) : mysql_ip(mysql_ip), mysql_port(mysql_port),
         info(info), explain_con(NULL){}
@@ -94,6 +95,7 @@ public:
     bool connect_for_explain();
     void cleanup();
     void get_query_key(char* key_buf, size_t* key_buf_len, const char* query, size_t q_len);
+    void init_replay();
     void finish_replay();
 };
 

@@ -47,6 +47,10 @@ void Mysql_packet::print()
   }
 }
 
+std::chrono::time_point<std::chrono::high_resolution_clock> Mysql_packet::get_chrono_ts()
+{
+}
+
 double Mysql_packet::ts_diff(Mysql_packet* other)
 {
   return (other->ts.tv_sec - ts.tv_sec) + (other->ts.tv_usec - ts.tv_usec) / 1000000.0;
