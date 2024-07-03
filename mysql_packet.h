@@ -2,6 +2,7 @@
 #define MYSQL_PACKET_H
 
 #include <pcap.h>
+#include <chrono>
 
 class Mysql_packet
 {

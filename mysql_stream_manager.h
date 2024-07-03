@@ -66,7 +66,6 @@ struct param_info
     }
 };
 
-
 class Mysql_stream_manager
 {
 public:
@@ -78,9 +77,11 @@ public:
     MYSQL* explain_con;
     Query_stats q_stats;
     std::chrono::time_point<std::chrono::high_resolution_clock> replay_start_ts;
+    struct timeval first_packet_ts;
+    bool first_packet_ts_inited;
 
     Mysql_stream_manager(u_int mysql_ip, u_int mysql_port, param_info* info) : mysql_ip(mysql_ip), mysql_port(mysql_port),
-        info(info), explain_con(NULL){}
+        info(info), explain_con(NULL), first_packet_ts_inited(false){}
     ~Mysql_stream_manager() { cleanup();}
 
     static u_longlong get_key(u_int dst_ip, u_int dst_port)
@@ -97,6 +98,9 @@ public:
     void get_query_key(char* key_buf, size_t* key_buf_len, const char* query, size_t q_len);
     void init_replay();
     void finish_replay();
+    u_longlong get_ellapsed_us();
+    u_longlong get_packet_ellapsed_us(Mysql_packet* p);
+    std::chrono::time_point<std::chrono::high_resolution_clock> get_scheduled_ts(Mysql_packet* p);
 };
 
 #endif

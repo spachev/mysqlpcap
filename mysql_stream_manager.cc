@@ -68,9 +68,15 @@ void Mysql_stream_manager::cleanup()
 
 void Mysql_stream_manager::init_replay()
 {
-    if (info->do_run)
-        replay_start_ts = std::chrono::high_resolution_clock::now();
+    replay_start_ts = std::chrono::high_resolution_clock::now();
 }
+
+u_longlong Mysql_stream_manager::get_ellapsed_us()
+{
+    auto now = std::chrono::high_resolution_clock::now();
+    return std::chrono::duration_cast<std::chrono::microseconds>(now - replay_start_ts).count();
+}
+
 
 bool Mysql_stream_manager::connect_for_explain()
 {
@@ -249,8 +255,35 @@ void Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u
         return;
 
     DEBUG_MSG("key=%llu in=%d len=%u flags=%u", key, in, len, tcp_header->th_flags);
+    if (!first_packet_ts_inited)
+    {
+        first_packet_ts = header->ts;
+        first_packet_ts_inited = true;
+    }
     s->append(header->ts, data, len, in);
 }
+
+std::chrono::time_point<std::chrono::high_resolution_clock> Mysql_stream_manager::get_scheduled_ts(Mysql_packet* p)
+{
+    if (replay_speed == 0.0)
+        return INVALID_TIME;
+
+    u_longlong delta_raw = get_packet_ellapsed_us(p);
+    u_longlong delta = (u_longlong)((double) delta_raw/ replay_speed);
+    return replay_start_ts + std::chrono::microseconds(delta);
+}
+
+
+u_longlong Mysql_stream_manager::get_packet_ellapsed_us(Mysql_packet* p)
+{
+    if (!first_packet_ts_inited)
+        return 0;
+
+    long long d_us = p->ts.tv_usec - first_packet_ts.tv_usec;
+    long long d_s = p->ts.tv_sec - first_packet_ts.tv_sec;
+    return d_s * 1000000 + d_us;
+}
+
 
 void Mysql_stream_manager::register_query(Mysql_query_packet* query)
 {

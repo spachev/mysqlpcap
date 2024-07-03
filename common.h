@@ -2,6 +2,7 @@
 #define COMMON_H
 
 #include <exception>
+#include <chrono>
 #include <assert.h>
 #include <mysql.h>
 
@@ -21,6 +22,11 @@ class Oom_exception: public Base_exception
 };
 
 typedef unsigned long long u_longlong;
+
+using Clock = std::chrono::high_resolution_clock;
+using Time_Point = std::chrono::time_point<Clock>;
+constexpr Time_Point INVALID_TIME = Time_Point::min();
+
 
 #define DO_ASSERT(s) assert((s))
 

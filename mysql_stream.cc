@@ -100,6 +100,19 @@ bool Mysql_stream::db_query(Mysql_query_packet* query_pkt)
   const char* query = query_pkt->query();
   u_int q_len = query_pkt->query_len();
   bool ret = false;
+
+  auto query_scheduled_ts = sm->get_scheduled_ts(query_pkt);
+  if (query_scheduled_ts != INVALID_TIME)
+  {
+    auto now = std::chrono::high_resolution_clock::now();
+
+    if (now < query_scheduled_ts)
+    {
+      auto delay = query_scheduled_ts - now;
+      std::this_thread::sleep_for(delay);
+    }
+  }
+
   auto start = std::chrono::high_resolution_clock::now();
 
   if (mysql_real_query(con, query, q_len) || !(res = mysql_use_result(con)))
