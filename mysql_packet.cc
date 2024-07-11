@@ -26,7 +26,10 @@ void Mysql_packet::append(const u_char* append_data, u_int* try_append_len)
   {
     append_len = len - cur_len;
   }
-  DO_ASSERT(append_len > 0);
+
+  if (!append_len)
+    return;
+
   memcpy(data + cur_len, append_data, append_len);
   cur_len += append_len;
   *try_append_len -= append_len;
@@ -45,10 +48,6 @@ void Mysql_packet::print()
   {
     printf("Query: %.*s\n", len - 1, data + 1);
   }
-}
-
-std::chrono::time_point<std::chrono::high_resolution_clock> Mysql_packet::get_chrono_ts()
-{
 }
 
 double Mysql_packet::ts_diff(Mysql_packet* other)

@@ -41,7 +41,6 @@ public:
     bool is_complete() { return len == cur_len;}
     void print();
     double ts_diff(Mysql_packet* other);
-    std::chrono::time_point<std::chrono::high_resolution_clock> get_chrono_ts();
     bool is_query();
     bool is_eof();
 };
