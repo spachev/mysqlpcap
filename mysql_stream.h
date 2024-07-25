@@ -44,7 +44,10 @@ public:
     }
 
     u_int get_cur_pkt_len() { return pkt_hdr[0] + (((u_int)pkt_hdr[1]) << 8) + (((u_int)pkt_hdr[2]) << 16);}
-    void append(struct timeval ts, const u_char* data, u_int len, bool in);
+
+    // returns true if the tcp packet that was appended contained the MySQL packet
+    // entirely
+    bool append(struct timeval ts, const u_char* data, u_int len, bool in);
     void cleanup();
     int create_new_packet(struct timeval ts, const u_char** data, u_int* len, bool in);
     void handle_packet_complete();

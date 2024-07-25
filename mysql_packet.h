@@ -16,6 +16,9 @@ public:
     u_int len;
     u_int cur_len;
     Mysql_packet* next;
+    Mysql_packet* prev;
+    double exec_time;
+    
     void cleanup();
     void init();
     void mark_ref() { ref_count++;}
@@ -35,7 +38,8 @@ public:
         return false;
     }
 
-    Mysql_packet(struct timeval ts, u_int len, bool in): ref_count(0),in(in),ts(ts),len(len),cur_len(0),next(0) { init(); }
+    Mysql_packet(struct timeval ts, u_int len, bool in): ref_count(0),in(in),ts(ts),len(len),cur_len(0),next(0),
+        prev(0) { init(); }
     ~Mysql_packet() { cleanup();}
     void append(const u_char* append_data, u_int* try_append_len);
     bool is_complete() { return len == cur_len;}
@@ -51,7 +55,6 @@ public:
     const char* query() { return (char*)data + 1;}
     u_int query_len() { return len - 1;}
 
-    double exec_time;
     void print_query()
     {
         printf("# exec_time = %.6fs\n%.*s\n", exec_time, query_len(), query());

@@ -36,6 +36,8 @@ struct Query_stats
     Query_stats():total_exec_time(0.0), n_queries(0)
     {
     }
+
+    ~Query_stats();
     void record_query(const char* lookup_key, double exec_time);
     void print();
 };
@@ -48,9 +50,11 @@ struct param_info
     bool do_explain;
     bool do_analyze;
     bool do_run;
+    bool report_progress;
+    off_t pcap_file_size;
 
     param_info():n_slow_queries(0), ethernet_header_size(14), do_explain(0),
-        do_analyze(0), do_run(0)
+        do_analyze(0), do_run(0),report_progress(false), pcap_file_size(0)
     {
     }
 
@@ -89,7 +93,9 @@ public:
         return (((u_longlong)dst_ip) << 32) + (u_longlong)dst_port;
     }
 
-    void process_pkt(const struct pcap_pkthdr* header, const u_char* packet);
+    // returns true if the packet is essential for replay,
+    // false if it can be dropped when writing out the replay file
+    bool process_pkt(const struct pcap_pkthdr* header, const u_char* packet);
     void register_query(Mysql_query_packet* query);
     void explain_query(Mysql_query_packet* query, bool analyze);
     void print_slow_queries();

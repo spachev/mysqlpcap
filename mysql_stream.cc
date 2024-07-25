@@ -34,7 +34,10 @@ void Mysql_stream::run_replay()
   lock.unlock();
 
   if (!p)
+  {
+    db_close();
     return;
+  }
 
   for (;;)
   {
@@ -141,21 +144,27 @@ err:
 }
 
 
-void Mysql_stream::append(struct timeval ts, const u_char* data, u_int len, bool in)
+bool Mysql_stream::append(struct timeval ts, const u_char* data, u_int len, bool in)
 {
   std::lock_guard<std::mutex> guard(lock);
+  bool created_new_packet = false;
+  uint n_passes = 0;
 
   while (len)
   {
+    n_passes++;
+
     if (!last || last->is_complete())
     {
       DEBUG_MSG("creating new packet");
       if (create_new_packet(ts, &data, &len, in))
-        return;
+        return false;
+
+      created_new_packet = true;
     }
 
     if (len == 0)
-      return;
+      return true;
 
     u_int len_before_append = len;
     last->append(data, &len);
@@ -164,6 +173,8 @@ void Mysql_stream::append(struct timeval ts, const u_char* data, u_int len, bool
       handle_packet_complete();
     data += (len_before_append - len);
   }
+
+  return n_passes == 1 && created_new_packet && last->is_complete();
 }
 
 void Mysql_stream::cleanup()
@@ -208,6 +219,7 @@ int Mysql_stream::create_new_packet(struct timeval ts, const u_char** data, u_in
 
   DO_ASSERT(last);
   last->next = pkt;
+  pkt->prev = last;
   last = pkt;
   return 0;
 }

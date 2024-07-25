@@ -199,13 +199,13 @@ static bool could_be_query(const u_char* data, u_int len)
     );
 }
 
-void Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u_char* packet)
+bool Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u_char* packet)
 {
     int tcp_header_len;
     const struct sniff_ip* ip_header = get_ip_header(info, packet);
     if (header->caplen < (char*)ip_header + sizeof(*ip_header) - (char*)packet ||
         ip_header->ip_p != 6 /* tcp */)
-            return;
+            return false;
 
     const struct sniff_tcp* tcp_header = get_tcp_header(info, packet, &tcp_header_len);
     const u_char* data = (const u_char*)tcp_header + tcp_header_len;
@@ -214,11 +214,11 @@ void Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u
     u_int len;
 
     if (header->caplen < (char*)data - (char*)packet)
-        return; //skip weird packets
+        return false; //skip weird packets
 
     len = header->caplen - ((char*)data - (char*)packet);
     if (ntohs(tcp_header->th_sport) != mysql_port && ntohs(tcp_header->th_dport) != mysql_port)
-        return;
+        return false;
 
     u_longlong key = in ? get_key(ip_header->ip_src.s_addr, tcp_header->th_sport) :
         get_key(ip_header->ip_dst.s_addr, tcp_header->th_dport);
@@ -229,7 +229,7 @@ void Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u
     if ((it = lookup.find(key)) == lookup.end())
     {
         if (!(tcp_header->th_flags & TH_SYN) && !in && !could_be_query(data, len))
-            return; // igore streams if we join in the middle of a conversation
+            return false; // igore streams if we join in the middle of a conversation
         s = new Mysql_stream(this, ip_header->ip_src.s_addr, tcp_header->th_sport,
                              ip_header->ip_dst.s_addr, tcp_header->th_dport);
         lookup[key] = s;
@@ -247,12 +247,12 @@ void Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u
                 s->end_replay();
             lookup.erase(it);
             delete s;
-            return;
+            return true;
         }
     }
 
     if (!len)
-        return;
+        return true;
 
     DEBUG_MSG("key=%llu in=%d len=%u flags=%u", key, in, len, tcp_header->th_flags);
     if (!first_packet_ts_inited)
@@ -260,7 +260,30 @@ void Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u
         first_packet_ts = header->ts;
         first_packet_ts_inited = true;
     }
-    s->append(header->ts, data, len, in);
+
+    bool full_append = s->append(header->ts, data, len, in);
+    if (!full_append)
+        return true;
+
+    bool res = s->last->is_eof() || in;
+    
+    // clean up the memory as the packet will not affect the benchmark or
+    // performance stats
+    if (!res)
+    {
+        Mysql_packet* tmp = s->last;
+        s->last = s->last->prev;
+        if (s->last)
+            s->last->next = 0;
+
+        if (s->first == tmp)
+            s->first = s->last;
+
+        if (tmp->unmark_ref())
+            delete tmp;
+    }
+
+    return res;
 }
 
 std::chrono::time_point<std::chrono::high_resolution_clock> Mysql_stream_manager::get_scheduled_ts(Mysql_packet* p)
@@ -360,6 +383,15 @@ void Query_pattern_stats::record_query(double exec_time)
         min_exec_time = exec_time;
     if (exec_time > max_exec_time)
         max_exec_time = exec_time;
+}
+
+Query_stats::~Query_stats()
+{
+    for (std::map<std::string, Query_pattern_stats*>::iterator it = lookup.begin();
+         it != lookup.end(); it++)
+    {
+        delete it->second;
+    }
 }
 
 void Query_stats::record_query(const char* lookup_key, double exec_time)

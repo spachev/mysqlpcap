@@ -6,6 +6,9 @@
 #include <arpa/inet.h>
 #include <getopt.h>
 #include <pcap.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #include "common.h"
 #include "mysql_stream_manager.h"
@@ -17,12 +20,15 @@ enum {
     REPLAY_PW,
     REPLAY_DB,
     REPLAY_SPEED,
+    PROGRESS,
+    RECORD_FOR_REPLAY
 };
 
 const char* replay_host = 0;
 const char* replay_user = 0;
 const char* replay_pw = 0;
 const char* replay_db = 0;
+const char* record_for_replay_file = 0;
 
 
 uint replay_port = 3306;
@@ -36,9 +42,9 @@ static struct option long_options[] =
           {"ip",       required_argument, 0, 'h'},
           {"print-n-slow", required_argument, 0, 'n'},
           {"ethernet-header-size", required_argument, 0, 'e'},
-          {"explain", required_argument, 0, 'E'},
-          {"analyze", required_argument, 0, 'A'},
-          {"run", required_argument, 0, 'R'},
+          {"explain", no_argument, 0, 'E'},
+          {"analyze", no_argument, 0, 'A'},
+          {"run", no_argument, 0, 'R'},
           {"replay-host", required_argument, 0, REPLAY_HOST},
           {"replay-port", required_argument, 0, REPLAY_PORT},
           {"replay-user", required_argument, 0, REPLAY_USER},
@@ -47,6 +53,8 @@ static struct option long_options[] =
           {"replay-db", required_argument, 0, REPLAY_DB},
           {"replay-speed", required_argument, 0, REPLAY_SPEED},
           {"query-pattern-regex", required_argument, 0, 'q'},
+          {"progress", no_argument, 0, PROGRESS},
+          {"record-for-replay", required_argument, 0, RECORD_FOR_REPLAY},
           {0, 0, 0, 0}
         };
 
@@ -126,6 +134,12 @@ void parse_args(int argc, char** argv)
             case 'q':
                 info.add_query_pattern(optarg);
                 break;
+            case PROGRESS:
+                info.report_progress = true;
+                break;
+            case RECORD_FOR_REPLAY:
+                record_for_replay_file = optarg;
+                break;
             default:
                 die("Invalid option -%c", c);
         }
@@ -136,20 +150,38 @@ void parse_args(int argc, char** argv)
         die("Missing file name, specify with -i argument");
 }
 
+void progress(const char* msg, ...)
+{
+    va_list ap;
+    va_start(ap, msg);
+    vfprintf(stderr, msg, ap);
+    fputc('\n', stderr);
+    va_end(ap);
+}
+
 #define PCAP_DIE(msg) die("pcap error: %s: %s", msg, error_buffer)
 
 void process_file(const char* fname)
 {
     char error_buffer[PCAP_ERRBUF_SIZE];
     pcap_t *ph = pcap_open_offline(fname, error_buffer);
+    int fd;
+    pcap_dumper_t *pd = 0;
     unsigned long long n_packets = 0;
+    uint last_pct = 0;
 
     if (!ph)
         PCAP_DIE("pcap_open_offline");
 
+    if ((fd = pcap_get_selectable_fd(ph)) == -1)
+        PCAP_DIE("Not able to get fd from the PCAP handle");
+
     // no filter, does not work if the packets have vlan ID in the ethernet header
     Mysql_stream_manager sm(mysql_ip.s_addr, mysql_port, &info);
     sm.init_replay();
+
+    if (record_for_replay_file && !(pd = pcap_dump_open(ph, record_for_replay_file)))
+        PCAP_DIE("Could not open record for replay file");
 
     while (1)
     {
@@ -159,9 +191,23 @@ void process_file(const char* fname)
         if (!packet)
             break;
 
+        if (info.report_progress)
+        {
+            off_t cur_pos = lseek(fd, 0, SEEK_CUR);
+            uint pct = cur_pos * 100 / info.pcap_file_size;
+            if (pct > last_pct)
+            {
+                progress("Completed: %u%%", pct);
+                last_pct = pct;
+            }
+        }
+
         try
         {
-            sm.process_pkt(&header, packet);
+            if (sm.process_pkt(&header, packet) && pd)
+            {
+                pcap_dump((unsigned char*)pd, &header, (unsigned char*)packet);
+            }
         }
         catch (std::exception e)
         {
@@ -170,10 +216,25 @@ void process_file(const char* fname)
     }
 
     pcap_close(ph);
+
+    if (pd)
+        pcap_dump_close(pd);
+
     sm.print_slow_queries();
 
     if (info.do_run)
         sm.finish_replay();
+}
+
+void init_file_size(const char* fname)
+{
+    struct stat s;
+    if (stat(fname, &s) == -1)
+    {
+        throw std::runtime_error("Could not stat pcap file " + std::string(fname));
+    }
+
+    info.pcap_file_size = s.st_size;
 }
 
 int main(int argc, char** argv)
@@ -182,6 +243,7 @@ int main(int argc, char** argv)
     try
     {
         parse_args(argc, argv);
+        init_file_size(fname);
     }
     catch (std::exception e)
     {
