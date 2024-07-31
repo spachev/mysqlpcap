@@ -241,6 +241,7 @@ void Mysql_stream::handle_packet_complete()
     last_query->exec_time = last_query->ts_diff(last);
     //printf("Query: %.*s\n exec_time=%.6f s\n", last_query->query_len(), last_query->query(), last_query->exec_time);
     sm->register_query(last_query);
+    last_query = 0;
   }
 }
 
