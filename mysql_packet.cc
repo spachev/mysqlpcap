@@ -8,8 +8,8 @@ void Mysql_packet::cleanup()
   if (!data)
     return;
 
-  delete[] data;
-  data = 0;
+    delete[] data;
+    data = 0;
 }
 
 void Mysql_packet::init()

@@ -54,6 +54,7 @@ public:
     void start_replay();
     void end_replay();
     void run_replay();
+    void unlink_pkt(Mysql_packet* pkt);
 
     bool db_connect();
     void db_close();

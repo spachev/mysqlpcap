@@ -41,13 +41,16 @@ void Mysql_stream::run_replay()
 
   for (;;)
   {
+    Mysql_packet* tmp;
     if (p->is_query())
       db_query((Mysql_query_packet*)p);
 
     lock.lock();
     if (p->next)
     {
+      tmp = p;
       p = p->next;
+      unlink_pkt(tmp);
       lock.unlock();
       continue;
     }
@@ -65,7 +68,30 @@ void Mysql_stream::run_replay()
       return;
     }
 
+    tmp = p;
     p = p->next;
+    unlink_pkt(tmp);
+  }
+}
+
+void Mysql_stream::unlink_pkt(Mysql_packet* pkt)
+{
+  if (pkt->prev)
+    pkt->prev->next = pkt->next;
+
+  if (pkt->next)
+    pkt->next->prev = pkt->prev;
+
+  if (pkt == first)
+    first = first->next;
+
+  if (pkt == last)
+      last = last->prev;
+
+  if (pkt->unmark_ref())
+  {
+
+    delete pkt;
   }
 }
 
@@ -184,8 +210,7 @@ void Mysql_stream::cleanup()
   while (pkt)
   {
     Mysql_packet* tmp = pkt->next;
-    if (pkt->unmark_ref())
-      delete pkt;
+    unlink_pkt(pkt);
     pkt = tmp;
   }
 }
@@ -209,6 +234,10 @@ int Mysql_stream::create_new_packet(struct timeval ts, const u_char** data, u_in
 
   Mysql_packet* pkt = new Mysql_packet(ts, get_cur_pkt_len(), in);
   pkt->mark_ref();
+
+  if (sm->info->do_run)
+    pkt->mark_ref(); // mark one more time for the replay thread
+
   cur_pkt_hdr_len = 0; // should be reset after the packet creation
 
   if (!first)
@@ -240,7 +269,8 @@ void Mysql_stream::handle_packet_complete()
   {
     last_query->exec_time = last_query->ts_diff(last);
     //printf("Query: %.*s\n exec_time=%.6f s\n", last_query->query_len(), last_query->query(), last_query->exec_time);
-    sm->register_query(last_query);
+    sm->register_query(this, last_query);
+    unlink_pkt(last_query);
     last_query = 0;
   }
 }

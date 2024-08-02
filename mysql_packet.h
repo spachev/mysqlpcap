@@ -3,6 +3,7 @@
 
 #include <pcap.h>
 #include <chrono>
+#include <stdlib.h>
 
 class Mysql_packet
 {
@@ -10,6 +11,7 @@ protected:
     u_int ref_count; // to prevent from freeing if referenced in another structer
 
 public:
+    double exec_time;
     bool in; // in or out
     struct timeval ts;
     u_char* data;
@@ -17,16 +19,17 @@ public:
     u_int cur_len;
     Mysql_packet* next;
     Mysql_packet* prev;
-    double exec_time;
-    
     void cleanup();
     void init();
-    void mark_ref() { ref_count++;}
+    void mark_ref()
+    {
+        assert(ref_count <= 2);
+        ref_count++;
+
+    }
     bool unmark_ref()
     {
-        if (!ref_count)
-            return true;
-
+        assert (ref_count);
         ref_count--;
 
         if (!ref_count)

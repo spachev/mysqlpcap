@@ -52,6 +52,16 @@ struct sniff_tcp {
 
 void Mysql_stream_manager::cleanup()
 {
+    for (std::set<Mysql_query_packet*, Mysql_query_packet_time_cmp>::iterator it = slow_queries.begin();
+         it != slow_queries.end(); it++)
+    {
+        Mysql_query_packet* pkt = *it;
+        pkt->unmark_ref();
+        delete pkt;
+    }
+
+    slow_queries.clear();
+
     for (std::map<u_longlong, Mysql_stream*>::iterator it = lookup.begin(); it != lookup.end(); it++)
     {
         delete (*it).second;
@@ -271,16 +281,7 @@ bool Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u
     // performance stats
     if (!res)
     {
-        Mysql_packet* tmp = s->last;
-        s->last = s->last->prev;
-        if (s->last)
-            s->last->next = 0;
-
-        if (s->first == tmp)
-            s->first = s->last;
-
-        if (tmp->unmark_ref())
-            delete tmp;
+        s->unlink_pkt(s->last);
     }
 
     return res;
@@ -308,18 +309,17 @@ u_longlong Mysql_stream_manager::get_packet_ellapsed_us(Mysql_packet* p)
 }
 
 
-void Mysql_stream_manager::register_query(Mysql_query_packet* query)
+void Mysql_stream_manager::register_query(Mysql_stream* s, Mysql_query_packet* query)
 {
-    slow_queries.insert(query);
     query->mark_ref();
+    slow_queries.insert(query);
 
     if (slow_queries.size() > info->n_slow_queries)
     {
         std::set<Mysql_query_packet*>::iterator it = --slow_queries.end();
         Mysql_query_packet* p = *it;
         slow_queries.erase(it);
-        if (p->unmark_ref())
-            delete p;
+        s->unlink_pkt(p);
     }
 }
 

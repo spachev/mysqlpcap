@@ -96,7 +96,7 @@ public:
     // returns true if the packet is essential for replay,
     // false if it can be dropped when writing out the replay file
     bool process_pkt(const struct pcap_pkthdr* header, const u_char* packet);
-    void register_query(Mysql_query_packet* query);
+    void register_query(Mysql_stream* s, Mysql_query_packet* query);
     void explain_query(Mysql_query_packet* query, bool analyze);
     void print_slow_queries();
     bool connect_for_explain();
