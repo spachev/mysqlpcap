@@ -8,20 +8,25 @@ void Mysql_packet::cleanup()
   if (!data)
     return;
 
-    delete[] data;
-    data = 0;
+  delete[] data;
+  data = 0;
+  perf_stats.pkt_mem_in_use -= len;
+  perf_stats.pkt_freed++;
 }
 
 void Mysql_packet::init()
 {
   DEBUG_MSG("packet len is %d", len);
   data = new u_char[len]; // throws on OOM
+  perf_stats.pkt_mem_in_use += len;
+  perf_stats.pkt_alloced++;
 }
 
 void Mysql_packet::append(const u_char* append_data, u_int* try_append_len)
 {
   u_int append_len = *try_append_len;
   DEBUG_MSG("cur_len=%u append_len=%u len=%u", cur_len, append_len, len);
+
   if (cur_len + append_len > len)
   {
     append_len = len - cur_len;

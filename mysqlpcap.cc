@@ -35,6 +35,8 @@ uint replay_port = 3306;
 uint mysql_port = 3306;
 double replay_speed = 1.0;
 
+Perf_stats perf_stats;
+
 static struct option long_options[] =
         {
           {"input",    required_argument, 0, 'i'},
@@ -156,6 +158,8 @@ void progress(const char* msg, ...)
     va_start(ap, msg);
     vfprintf(stderr, msg, ap);
     fputc('\n', stderr);
+    fprintf(stderr, "pkt_mem_in_use %llu pkt_alloced %llu pkt_freed %llu\n",
+                         perf_stats.pkt_mem_in_use, perf_stats.pkt_alloced, perf_stats.pkt_freed);
     va_end(ap);
 }
 
@@ -251,5 +255,6 @@ int main(int argc, char** argv)
     }
 
     process_file(fname);
+    progress("Finished");
     return 0;
 }

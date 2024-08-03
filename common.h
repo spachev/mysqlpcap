@@ -6,12 +6,26 @@
 #include <assert.h>
 #include <mysql.h>
 
+typedef unsigned long long u_longlong;
+
+
 extern const char* replay_host;
 extern const char* replay_user;
 extern const char* replay_pw;
 extern const char* replay_db;
 extern uint replay_port;
 extern double replay_speed;
+
+struct Perf_stats
+{
+    u_longlong pkt_mem_in_use;
+    u_longlong pkt_alloced;
+    u_longlong pkt_freed;
+
+    Perf_stats():pkt_mem_in_use(0), pkt_alloced(0), pkt_freed(0) {}
+};
+
+extern Perf_stats perf_stats;
 
 class Base_exception: public std::exception
 {
@@ -20,8 +34,6 @@ class Base_exception: public std::exception
 class Oom_exception: public Base_exception
 {
 };
-
-typedef unsigned long long u_longlong;
 
 using Clock = std::chrono::high_resolution_clock;
 using Time_Point = std::chrono::time_point<Clock>;

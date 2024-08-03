@@ -88,6 +88,8 @@ void Mysql_stream::unlink_pkt(Mysql_packet* pkt)
   if (pkt == last)
       last = last->prev;
 
+  pkt->next = pkt->prev = 0;
+
   if (pkt->unmark_ref())
   {
 
@@ -174,11 +176,9 @@ bool Mysql_stream::append(struct timeval ts, const u_char* data, u_int len, bool
 {
   std::lock_guard<std::mutex> guard(lock);
   bool created_new_packet = false;
-  uint n_passes = 0;
 
   while (len)
   {
-    n_passes++;
 
     if (!last || last->is_complete())
     {
@@ -200,7 +200,7 @@ bool Mysql_stream::append(struct timeval ts, const u_char* data, u_int len, bool
     data += (len_before_append - len);
   }
 
-  return n_passes == 1 && created_new_packet && last->is_complete();
+  return created_new_packet;
 }
 
 void Mysql_stream::cleanup()
@@ -209,6 +209,7 @@ void Mysql_stream::cleanup()
 
   while (pkt)
   {
+    //printf("in=%d eof=%d cmd=%d len=%d\n", pkt->in, pkt->is_eof(), pkt->data[0], pkt->len);
     Mysql_packet* tmp = pkt->next;
     unlink_pkt(pkt);
     pkt = tmp;
@@ -265,13 +266,31 @@ void Mysql_stream::handle_packet_complete()
     return;
   }
 
+
   if (last_query && last->is_eof())
   {
+    assert(last->next == 0);
+    assert(last_query->next);
     last_query->exec_time = last_query->ts_diff(last);
     //printf("Query: %.*s\n exec_time=%.6f s\n", last_query->query_len(), last_query->query(), last_query->exec_time);
+    Mysql_packet* next_p = last_query->next;
     sm->register_query(this, last_query);
     unlink_pkt(last_query);
+
+    for (Mysql_packet* p = next_p; p; )
+    {
+      Mysql_packet* tmp = p->next;
+      unlink_pkt(p);
+      p = tmp;
+    }
+
     last_query = 0;
+    return;
+  }
+
+  if (!last->in && !last->is_eof())
+  {
+    unlink_pkt(last);
   }
 }
 

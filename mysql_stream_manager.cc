@@ -52,7 +52,7 @@ struct sniff_tcp {
 
 void Mysql_stream_manager::cleanup()
 {
-    for (std::set<Mysql_query_packet*, Mysql_query_packet_time_cmp>::iterator it = slow_queries.begin();
+    for (std::multiset<Mysql_query_packet*, Mysql_query_packet_time_cmp>::iterator it = slow_queries.begin();
          it != slow_queries.end(); it++)
     {
         Mysql_query_packet* pkt = *it;
@@ -271,20 +271,9 @@ bool Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u
         first_packet_ts_inited = true;
     }
 
-    bool full_append = s->append(header->ts, data, len, in);
-    if (!full_append)
-        return true;
+    s->append(header->ts, data, len, in);
 
-    bool res = s->last->is_eof() || in;
-    
-    // clean up the memory as the packet will not affect the benchmark or
-    // performance stats
-    if (!res)
-    {
-        s->unlink_pkt(s->last);
-    }
-
-    return res;
+    return true; // for now
 }
 
 std::chrono::time_point<std::chrono::high_resolution_clock> Mysql_stream_manager::get_scheduled_ts(Mysql_packet* p)
@@ -308,7 +297,6 @@ u_longlong Mysql_stream_manager::get_packet_ellapsed_us(Mysql_packet* p)
     return d_s * 1000000 + d_us;
 }
 
-
 void Mysql_stream_manager::register_query(Mysql_stream* s, Mysql_query_packet* query)
 {
     query->mark_ref();
@@ -316,7 +304,7 @@ void Mysql_stream_manager::register_query(Mysql_stream* s, Mysql_query_packet* q
 
     if (slow_queries.size() > info->n_slow_queries)
     {
-        std::set<Mysql_query_packet*>::iterator it = --slow_queries.end();
+        std::multiset<Mysql_query_packet*>::iterator it = --slow_queries.end();
         Mysql_query_packet* p = *it;
         slow_queries.erase(it);
         s->unlink_pkt(p);
@@ -334,7 +322,7 @@ void Mysql_stream_manager::print_slow_queries()
         }
     }
 
-    for (std::set<Mysql_query_packet*>::iterator it = slow_queries.begin();
+    for (std::multiset<Mysql_query_packet*>::iterator it = slow_queries.begin();
          it != slow_queries.end(); it++)
     {
         Mysql_query_packet* p = *it;

@@ -76,7 +76,7 @@ public:
     u_int mysql_ip;
     u_int mysql_port;
     std::map<u_longlong, Mysql_stream*> lookup;
-    std::set<Mysql_query_packet*, Mysql_query_packet_time_cmp> slow_queries;
+    std::multiset<Mysql_query_packet*, Mysql_query_packet_time_cmp> slow_queries;
     param_info* info;
     MYSQL* explain_con;
     Query_stats q_stats;
