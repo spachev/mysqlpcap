@@ -11,6 +11,7 @@ protected:
     u_int ref_count; // to prevent from freeing if referenced in another structer
 
 public:
+    friend class Mysql_stream;
     double exec_time;
     bool in; // in or out
     struct timeval ts;

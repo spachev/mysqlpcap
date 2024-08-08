@@ -307,7 +307,7 @@ void Mysql_stream_manager::register_query(Mysql_stream* s, Mysql_query_packet* q
         std::multiset<Mysql_query_packet*>::iterator it = --slow_queries.end();
         Mysql_query_packet* p = *it;
         slow_queries.erase(it);
-        s->unlink_pkt(p);
+        s->consider_unlink_pkt(p);
     }
 }
 

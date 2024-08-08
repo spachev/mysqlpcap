@@ -55,6 +55,7 @@ public:
     void end_replay();
     void run_replay();
     void unlink_pkt(Mysql_packet* pkt);
+    void consider_unlink_pkt(Mysql_packet* pkt, bool in_replay=false);
 
     bool db_connect();
     void db_close();

@@ -50,7 +50,7 @@ void Mysql_stream::run_replay()
     {
       tmp = p;
       p = p->next;
-      unlink_pkt(tmp);
+      consider_unlink_pkt(tmp, true);
       lock.unlock();
       continue;
     }
@@ -70,12 +70,13 @@ void Mysql_stream::run_replay()
 
     tmp = p;
     p = p->next;
-    unlink_pkt(tmp);
+    consider_unlink_pkt(tmp, true);
   }
 }
 
 void Mysql_stream::unlink_pkt(Mysql_packet* pkt)
 {
+  
   if (pkt->prev)
     pkt->prev->next = pkt->next;
 
@@ -236,9 +237,6 @@ int Mysql_stream::create_new_packet(struct timeval ts, const u_char** data, u_in
   Mysql_packet* pkt = new Mysql_packet(ts, get_cur_pkt_len(), in);
   pkt->mark_ref();
 
-  if (sm->info->do_run)
-    pkt->mark_ref(); // mark one more time for the replay thread
-
   cur_pkt_hdr_len = 0; // should be reset after the packet creation
 
   if (!first)
@@ -252,6 +250,21 @@ int Mysql_stream::create_new_packet(struct timeval ts, const u_char** data, u_in
   pkt->prev = last;
   last = pkt;
   return 0;
+}
+
+void Mysql_stream::consider_unlink_pkt(Mysql_packet* pkt, bool in_replay)
+{
+  if (!sm->info->do_run)
+  {
+    unlink_pkt(pkt);
+    return;
+  }
+    
+  if (in_replay)
+  {
+    if (pkt->ref_count == 1)
+     unlink_pkt(pkt);
+  }
 }
 
 void Mysql_stream::handle_packet_complete()
@@ -275,12 +288,17 @@ void Mysql_stream::handle_packet_complete()
     //printf("Query: %.*s\n exec_time=%.6f s\n", last_query->query_len(), last_query->query(), last_query->exec_time);
     Mysql_packet* next_p = last_query->next;
     sm->register_query(this, last_query);
-    unlink_pkt(last_query);
+    
+    consider_unlink_pkt(last_query);
 
     for (Mysql_packet* p = next_p; p; )
     {
       Mysql_packet* tmp = p->next;
-      unlink_pkt(p);
+      
+      if (p != last)
+        unlink_pkt(p);
+      else
+        consider_unlink_pkt(p);
       p = tmp;
     }
 
