@@ -34,7 +34,8 @@ public:
     bool reached_eof;
 
     Mysql_stream(Mysql_stream_manager* sm, u_int src_ip, u_short src_port, u_int dst_ip, u_short dst_port):
-    sm(sm),src_ip(src_ip),first(0),last(0),last_query(0),cur_pkt_hdr_len(0),con(0),th(0),reached_eof(0)
+        sm(sm),src_port(src_port),src_ip(src_ip),dst_ip(dst_ip),
+        dst_port(dst_port),first(0),last(0),last_query(0),cur_pkt_hdr_len(0),con(0),th(0),reached_eof(0)
     {
     }
 
@@ -56,10 +57,14 @@ public:
     void run_replay();
     void unlink_pkt(Mysql_packet* pkt);
     void consider_unlink_pkt(Mysql_packet* pkt, bool in_replay=false);
+    void register_replay_packet(Mysql_packet* pkt);
 
     bool db_connect();
     void db_close();
     bool db_query(Mysql_query_packet* query_pkt);
+    u_longlong get_key(Mysql_packet* pkt);
+    void register_stream_end(struct timeval ts);
+    void append_packet(Mysql_packet* pkt);
 
 };
 #endif

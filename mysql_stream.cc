@@ -24,6 +24,21 @@ void Mysql_stream::end_replay()
   th = 0;
 }
 
+void Mysql_stream::register_replay_packet(Mysql_packet* pkt)
+{
+  if (!sm->in_replay_write)
+    return;
+
+  if (pkt->replay_write(sm->replay_fd, get_key(pkt)))
+    throw std::runtime_error("Error writing to replay file");
+}
+
+u_longlong Mysql_stream::get_key(Mysql_packet* pkt)
+{
+  return pkt->in ? Mysql_stream_manager::get_key(dst_ip, dst_port) :
+            Mysql_stream_manager::get_key(src_ip, src_port);
+}
+
 void Mysql_stream::run_replay()
 {
   if (!db_connect())
@@ -46,6 +61,7 @@ void Mysql_stream::run_replay()
       db_query((Mysql_query_packet*)p);
 
     lock.lock();
+
     if (p->next)
     {
       tmp = p;
@@ -54,6 +70,8 @@ void Mysql_stream::run_replay()
       lock.unlock();
       continue;
     }
+
+    lock.unlock();
 
     std::unique_lock<std::mutex> lk(eof_lock);
 
@@ -120,8 +138,11 @@ bool Mysql_stream::db_connect()
 
 void Mysql_stream::db_close()
 {
-  mysql_close(con);
-  con = 0;
+  if (con)
+  {
+    mysql_close(con);
+    con = 0;
+  }
 }
 
 bool Mysql_stream::db_query(Mysql_query_packet* query_pkt)
@@ -267,6 +288,37 @@ void Mysql_stream::consider_unlink_pkt(Mysql_packet* pkt, bool in_replay)
   }
 }
 
+void Mysql_stream::register_stream_end(struct timeval ts)
+{
+  if (sm->replay_fd == -1)
+    return;
+
+  Mysql_packet p;
+  p.ts = ts;
+  p.len = 0;
+  p.in = true;
+  if (p.replay_write(sm->replay_fd, get_key(&p)))
+    throw std::runtime_error("Failed to write stream end");
+}
+
+void Mysql_stream::append_packet(Mysql_packet* pkt)
+{
+  std::lock_guard<std::mutex> guard(lock);
+  pkt->mark_ref();
+
+  if (!first)
+  {
+    last = first = pkt;
+    return;
+  }
+
+  DO_ASSERT(last);
+  last->next = pkt;
+  pkt->prev = last;
+  last = pkt;
+  handle_packet_complete();
+}
+
 void Mysql_stream::handle_packet_complete()
 {
   eof_lock.lock();
@@ -276,6 +328,7 @@ void Mysql_stream::handle_packet_complete()
   if (last->is_query())
   {
     last_query = (Mysql_query_packet*)last;
+    register_replay_packet(last);
     return;
   }
 
@@ -284,6 +337,7 @@ void Mysql_stream::handle_packet_complete()
   {
     assert(last->next == 0);
     assert(last_query->next);
+    register_replay_packet(last);
     last_query->exec_time = last_query->ts_diff(last);
     //printf("Query: %.*s\n exec_time=%.6f s\n", last_query->query_len(), last_query->query(), last_query->exec_time);
     Mysql_packet* next_p = last_query->next;

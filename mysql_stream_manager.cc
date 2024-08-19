@@ -2,6 +2,10 @@
 #include <string.h>
 #include <netinet/in.h>
 #include <mysql.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 #include "common.h"
 #include "mysql_stream_manager.h"
@@ -73,6 +77,12 @@ void Mysql_stream_manager::cleanup()
     {
         mysql_close(explain_con);
         explain_con = 0;
+    }
+
+    if (replay_fd >= 0)
+    {
+      close(replay_fd);
+      replay_fd = -1;
     }
 }
 
@@ -253,8 +263,11 @@ bool Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u
         // TODO: this throttles the benchmark, figure out how to make it better
         if (tcp_header->th_flags & (TH_RST | TH_FIN))
         {
+            s->register_stream_end(header->ts);
+
             if (info->do_run)
                 s->end_replay();
+
             lookup.erase(it);
             delete s;
             return true;
@@ -286,6 +299,105 @@ std::chrono::time_point<std::chrono::high_resolution_clock> Mysql_stream_manager
     return replay_start_ts + std::chrono::microseconds(delta);
 }
 
+// returns false on success, true on error
+bool Mysql_stream_manager::write_to_replay_file(const char* data, size_t len)
+{
+  return write(replay_fd, data, len) != len;
+}
+
+
+bool Mysql_stream_manager::init_replay_file(const char* fname)
+{
+  if ((replay_fd = open(fname, O_WRONLY|O_CREAT, 0660)) < 0)
+    return true;
+
+  in_replay_write = true;
+
+  char ver_buf[2];
+  int2store(ver_buf, REPLAY_FILE_VER);
+
+  if (write_to_replay_file(REPLAY_FILE_MAGIC, REPLAY_FILE_MAGIC_LEN) ||
+      write_to_replay_file(ver_buf, sizeof(ver_buf))
+  )
+    return true;
+
+  return false;
+}
+
+Mysql_stream* Mysql_stream_manager::find_or_make_stream(u_longlong key, Mysql_packet* pkt)
+{
+  u_int src_ip = (key >> 32);
+  u_int src_port = key & ((1LL << 32) - 1);
+
+  Mysql_stream* s;
+  std::map<u_longlong, Mysql_stream*>::iterator it;
+
+  if ((it = lookup.find(key)) == lookup.end())
+  {
+    if (pkt->len == 0)
+      return NULL; // found end of stream on an inactive  stream
+
+    s = new Mysql_stream(this, src_ip, src_port,
+                          mysql_ip, mysql_port);
+    lookup[key] = s;
+
+    if (info->do_run)
+        s->start_replay();
+  }
+  else
+  {
+    s = it->second;
+    // TODO: this throttles the benchmark, figure out how to make it better
+    if (pkt->len == 0)
+    {
+        if (info->do_run)
+            s->end_replay();
+        lookup.erase(it);
+        delete s;
+        return NULL;
+    }
+  }
+
+  return s;
+}
+
+void Mysql_stream_manager::process_replay_file(const char* fname)
+{
+  if ((replay_fd = open(fname, O_RDONLY)) < 0)
+    throw std::runtime_error("Error opening replay file for reading");
+
+  char magic[REPLAY_FILE_MAGIC_LEN];
+
+  if (read(replay_fd, magic, REPLAY_FILE_MAGIC_LEN) != REPLAY_FILE_MAGIC_LEN)
+    throw std::runtime_error("Failed to read the magic number in the replay file");
+
+  if (memcmp(magic, REPLAY_FILE_MAGIC, REPLAY_FILE_MAGIC_LEN) != 0)
+    throw std::runtime_error("Bad magic number in the replay file");
+
+  char ver_buf[2];
+
+  if (read(replay_fd, ver_buf, sizeof(ver_buf)) != sizeof(ver_buf))
+    throw std::runtime_error("Failed to read the replay file format version number");
+
+  while (1)
+  {
+    Mysql_packet* pkt = new Mysql_packet(); // throws on OOM
+    u_longlong key;
+
+    if (pkt->replay_read(replay_fd, &key))
+      return; // EOF or truncated file
+
+    Mysql_stream* s = find_or_make_stream(key, pkt);
+
+    if (!s)
+    {
+      delete pkt;
+      continue;
+    }
+
+    s->append_packet(pkt);
+  }
+}
 
 u_longlong Mysql_stream_manager::get_packet_ellapsed_us(Mysql_packet* p)
 {

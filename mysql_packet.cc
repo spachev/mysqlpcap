@@ -1,4 +1,9 @@
 #include <string.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
 
 #include "common.h"
 #include "mysql_packet.h"
@@ -20,6 +25,73 @@ void Mysql_packet::init()
   data = new u_char[len]; // throws on OOM
   perf_stats.pkt_mem_in_use += len;
   perf_stats.pkt_alloced++;
+}
+
+#define PACKET_HEADER_SIZE (8+1+16+4) // key + in + ts + data_len
+
+// returns false on success
+bool Mysql_packet::replay_write(int fd, u_longlong key)
+{
+  char buf[PACKET_HEADER_SIZE];
+  char* p = buf;
+  int8store(p, key);
+
+  p += 8;
+  *p++ = in ? 1 : 0;
+  int8store(p, ts.tv_sec);
+  p += 8;
+  int8store(p, ts.tv_usec);
+  p += 8;
+  int4store(p, len);
+  if (write(fd, buf, sizeof(buf)) != sizeof(buf))
+    return true;
+
+  if (!len)
+    return false; // End of stream
+
+  if (write(fd, data, len) != len)
+    return true;
+
+  return false;
+}
+
+bool Mysql_packet::replay_read(int fd, u_longlong* key)
+{
+  char buf[PACKET_HEADER_SIZE];
+  char* p = buf;
+
+  if (read(fd, buf, sizeof(buf)) != sizeof(buf))
+  {
+    data = 0;
+    len = 0;
+    return true;
+  }
+
+  *key = uint8korr(p);
+  p += 8;
+  in = *p++;
+  ts.tv_sec = uint8korr(p);
+  p += 8;
+  ts.tv_usec = uint8korr(p);
+  p += 8;
+  len = uint4korr(p);
+
+  if (!len)
+    return false; // end of stream
+
+  data = new u_char[len]; // throws on OOM
+  perf_stats.pkt_mem_in_use += len;
+  perf_stats.pkt_alloced++;
+
+  if (read(fd, data, len) != len)
+  {
+    delete[] data;
+    data = 0;
+    len = 0;
+    return true;
+  }
+
+  return false;
 }
 
 void Mysql_packet::append(const u_char* append_data, u_int* try_append_len)

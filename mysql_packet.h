@@ -44,6 +44,7 @@ public:
 
     Mysql_packet(struct timeval ts, u_int len, bool in): ref_count(0),in(in),ts(ts),len(len),cur_len(0),next(0),
         prev(0) { init(); }
+    Mysql_packet():ref_count(0),data(0),len(0),cur_len(0),next(0),prev(0) {}
     ~Mysql_packet() { cleanup();}
     void append(const u_char* append_data, u_int* try_append_len);
     bool is_complete() { return len == cur_len;}
@@ -51,6 +52,9 @@ public:
     double ts_diff(Mysql_packet* other);
     bool is_query();
     bool is_eof();
+
+    bool replay_write(int fd, u_longlong key);
+    bool replay_read(int fd, u_longlong* key);
 };
 
 class Mysql_query_packet: public Mysql_packet
