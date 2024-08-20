@@ -385,7 +385,10 @@ void Mysql_stream_manager::process_replay_file(const char* fname)
     u_longlong key;
 
     if (pkt->replay_read(replay_fd, &key))
+    {
+      delete pkt;
       return; // EOF or truncated file
+    }
 
     Mysql_stream* s = find_or_make_stream(key, pkt);
 

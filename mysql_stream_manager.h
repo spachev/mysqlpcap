@@ -51,10 +51,11 @@ struct param_info
     bool do_analyze;
     bool do_run;
     bool report_progress;
+    bool assert_on_query_error;
     off_t pcap_file_size;
 
     param_info():n_slow_queries(0), ethernet_header_size(14), do_explain(0),
-        do_analyze(0), do_run(0),report_progress(false), pcap_file_size(0)
+        do_analyze(0), do_run(0),report_progress(false),assert_on_query_error(false), pcap_file_size(0)
     {
     }
 

@@ -25,7 +25,8 @@ enum {
   REPLAY_DB,
   REPLAY_SPEED,
   PROGRESS,
-  RECORD_FOR_REPLAY
+  RECORD_FOR_REPLAY,
+  ASSERT_ON_QUERY_ERROR,
 };
 
 const char* replay_host = 0;
@@ -61,6 +62,7 @@ static struct option long_options[] =
   {"query-pattern-regex", required_argument, 0, 'q'},
   {"progress", no_argument, 0, PROGRESS},
   {"record-for-replay", required_argument, 0, RECORD_FOR_REPLAY},
+  {"assert-on-query-error", no_argument, 0, ASSERT_ON_QUERY_ERROR},
   {0, 0, 0, 0}
 };
 
@@ -119,6 +121,9 @@ void parse_args(int argc, char** argv)
       case 'n':
         info.n_slow_queries = atoi(optarg);
         break;
+      case ASSERT_ON_QUERY_ERROR:
+          info.assert_on_query_error = true;
+          break;
       case REPLAY_HOST:
         replay_host = optarg;
         break;

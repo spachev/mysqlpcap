@@ -171,6 +171,8 @@ bool Mysql_stream::db_query(Mysql_query_packet* query_pkt)
   if (mysql_real_query(con, query, q_len) || !(res = mysql_use_result(con)))
   {
     fprintf(stderr, "Error running query: %*.s : %s\n", q_len, query, mysql_error(con));
+    if (sm->info->assert_on_query_error)
+      assert(false);
     goto err;
   }
 
@@ -235,6 +237,12 @@ void Mysql_stream::cleanup()
     Mysql_packet* tmp = pkt->next;
     unlink_pkt(pkt);
     pkt = tmp;
+  }
+
+  if (con)
+  {
+    mysql_close(con);
+    con = 0;
   }
 }
 
