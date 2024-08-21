@@ -168,7 +168,7 @@ bool Mysql_stream::db_query(Mysql_query_packet* query_pkt)
 
   auto start = std::chrono::high_resolution_clock::now();
 
-  if (mysql_real_query(con, query, q_len) || !(res = mysql_use_result(con)))
+  if (mysql_real_query(con, query, q_len) )
   {
     fprintf(stderr, "Error running query: %*.s : %s\n", q_len, query, mysql_error(con));
     if (sm->info->assert_on_query_error)
@@ -176,8 +176,11 @@ bool Mysql_stream::db_query(Mysql_query_packet* query_pkt)
     goto err;
   }
 
-  while ((row = mysql_fetch_row(res)))
+  if ((res = mysql_use_result(con))) // otherwise the query does not have a result set, e.g update
   {
+    while ((row = mysql_fetch_row(res)))
+    {
+    }
   }
 
   ret = true;
