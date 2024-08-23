@@ -15,16 +15,16 @@ void Mysql_packet::cleanup()
 
   delete[] data;
   data = 0;
-  perf_stats.pkt_mem_in_use -= len;
-  perf_stats.pkt_freed++;
+  std::atomic_fetch_sub(&perf_stats.pkt_mem_in_use, len);
+  std::atomic_fetch_add(&perf_stats.pkt_freed, 1);
 }
 
 void Mysql_packet::init()
 {
   DEBUG_MSG("packet len is %d", len);
   data = new u_char[len]; // throws on OOM
-  perf_stats.pkt_mem_in_use += len;
-  perf_stats.pkt_alloced++;
+  std::atomic_fetch_add(&perf_stats.pkt_mem_in_use, len);
+  std::atomic_fetch_add(&perf_stats.pkt_alloced, 1);
 }
 
 #define PACKET_HEADER_SIZE (8+1+16+4) // key + in + ts + data_len
@@ -77,11 +77,13 @@ bool Mysql_packet::replay_read(int fd, u_longlong* key)
   len = uint4korr(p);
 
   if (!len)
+  {
     return false; // end of stream
+  }
 
   data = new u_char[len]; // throws on OOM
-  perf_stats.pkt_mem_in_use += len;
-  perf_stats.pkt_alloced++;
+  std::atomic_fetch_add(&perf_stats.pkt_mem_in_use, len);
+  std::atomic_fetch_add(&perf_stats.pkt_alloced, 1);
 
   if (read(fd, data, len) != len)
   {

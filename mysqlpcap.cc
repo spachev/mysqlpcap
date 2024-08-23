@@ -168,7 +168,8 @@ void progress(const char* msg, ...)
   vfprintf(stderr, msg, ap);
   fputc('\n', stderr);
   fprintf(stderr, "pkt_mem_in_use %llu pkt_alloced %llu pkt_freed %llu\n",
-          perf_stats.pkt_mem_in_use, perf_stats.pkt_alloced, perf_stats.pkt_freed);
+          std::atomic_load(&perf_stats.pkt_mem_in_use), std::atomic_load(&perf_stats.pkt_alloced),
+          std::atomic_load(&perf_stats.pkt_freed));
   va_end(ap);
 }
 

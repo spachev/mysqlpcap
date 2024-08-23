@@ -5,6 +5,7 @@
 #include <chrono>
 #include <assert.h>
 #include <mysql.h>
+#include <atomic>
 
 typedef unsigned long long u_longlong;
 typedef unsigned long long ulonglong;
@@ -24,9 +25,9 @@ extern double replay_speed;
 
 struct Perf_stats
 {
-    u_longlong pkt_mem_in_use;
-    u_longlong pkt_alloced;
-    u_longlong pkt_freed;
+    std::atomic_ullong pkt_mem_in_use;
+    std::atomic_ullong pkt_alloced;
+    std::atomic_ullong pkt_freed;
 
     Perf_stats():pkt_mem_in_use(0), pkt_alloced(0), pkt_freed(0) {}
 };

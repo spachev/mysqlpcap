@@ -44,6 +44,13 @@ public:
         cleanup();
     }
 
+    bool db_ensure_connected()
+    {
+      if (!con)
+        return db_connect();
+      return true;
+    }
+
     u_int get_cur_pkt_len() { return pkt_hdr[0] + (((u_int)pkt_hdr[1]) << 8) + (((u_int)pkt_hdr[2]) << 16);}
 
     // returns true if the tcp packet that was appended contained the MySQL packet

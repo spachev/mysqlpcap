@@ -41,8 +41,6 @@ u_longlong Mysql_stream::get_key(Mysql_packet* pkt)
 
 void Mysql_stream::run_replay()
 {
-  if (!db_connect())
-    return;
 
   lock.lock();
   Mysql_packet* p = first;
@@ -166,11 +164,14 @@ bool Mysql_stream::db_query(Mysql_query_packet* query_pkt)
     }
   }
 
+  if (!db_ensure_connected())
+    return false;
+
   auto start = std::chrono::high_resolution_clock::now();
 
   if (mysql_real_query(con, query, q_len) )
   {
-    fprintf(stderr, "Error running query: %*.s : %s\n", q_len, query, mysql_error(con));
+    fprintf(stderr, "Error running query: %.*s : %s\n", q_len, query, mysql_error(con));
     if (sm->info->assert_on_query_error)
       assert(false);
     goto err;
