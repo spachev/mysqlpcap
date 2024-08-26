@@ -15,10 +15,12 @@ void Mysql_stream::end_replay()
   if (!th)
     return;
 
+  lock.lock();
   eof_lock.lock();
   reached_eof = 1;
   eof_cond.notify_one();
   eof_lock.unlock();
+  lock.unlock();
   th->join();
   delete th;
   th = 0;
@@ -86,7 +88,11 @@ void Mysql_stream::run_replay()
 
     tmp = p;
     p = p->next;
+    eof_lock.unlock();
+    lock.lock();
     consider_unlink_pkt(tmp, true);
+    lock.unlock();
+    eof_lock.lock();
   }
 }
 
@@ -321,6 +327,7 @@ void Mysql_stream::append_packet(Mysql_packet* pkt)
   if (!first)
   {
     last = first = pkt;
+    handle_packet_complete();
     return;
   }
 
