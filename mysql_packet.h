@@ -20,6 +20,7 @@ public:
     u_int cur_len;
     Mysql_packet* next;
     Mysql_packet* prev;
+    bool skip; // to deal with multi-part packets
     void cleanup();
     void init();
     void mark_ref()
@@ -43,7 +44,7 @@ public:
     }
 
     Mysql_packet(struct timeval ts, u_int len, bool in): ref_count(0),in(in),ts(ts),len(len),cur_len(0),next(0),
-        prev(0) { init(); }
+        prev(0), skip(false) { init(); }
     Mysql_packet():ref_count(0),data(0),len(0),cur_len(0),next(0),prev(0) {}
     ~Mysql_packet() { cleanup();}
     void append(const u_char* append_data, u_int* try_append_len);

@@ -149,16 +149,19 @@ void Mysql_stream::db_close()
   }
 }
 
+#define PACKET_OVERFLOW_LEN 0xffffff
+
 bool Mysql_stream::db_query(Mysql_query_packet* query_pkt)
 {
-  // TODO: record stats
   MYSQL_RES* res = 0;
   MYSQL_ROW row = 0;
+  bool ret = false;
   const char* query = query_pkt->query();
   u_int q_len = query_pkt->query_len();
-  bool ret = false;
-
+  Mysql_packet* cur_pkt = query_pkt;
   auto query_scheduled_ts = sm->get_scheduled_ts(query_pkt);
+  auto start = std::chrono::high_resolution_clock::now();
+
   if (query_scheduled_ts != INVALID_TIME)
   {
     auto now = std::chrono::high_resolution_clock::now();
@@ -170,10 +173,43 @@ bool Mysql_stream::db_query(Mysql_query_packet* query_pkt)
     }
   }
 
+  while (cur_pkt->len == PACKET_OVERFLOW_LEN)
+  {
+    std::unique_lock<std::mutex> lk(eof_lock);
+    while (!cur_pkt->next && !reached_eof)
+      eof_cond.wait(lk);
+
+    cur_pkt = cur_pkt->next;
+
+    if (!cur_pkt)
+      goto err;
+
+    q_len += cur_pkt->len;
+  }
+
+  if (cur_pkt != query_pkt)
+  {
+    query = new char[q_len];
+    char* p = (char*)query;
+    cur_pkt = query_pkt;
+    memcpy(p, query_pkt->query(), query_pkt->query_len());
+    p += query_pkt->query_len();
+
+    while (cur_pkt->len == PACKET_OVERFLOW_LEN)
+    {
+      memcpy(p, cur_pkt->data, cur_pkt->len);
+      p += cur_pkt->len;
+      cur_pkt = cur_pkt->next;
+      assert(cur_pkt);
+    }
+  }
+
+  cur_pkt = query_pkt;
+
   if (!db_ensure_connected())
     return false;
 
-  auto start = std::chrono::high_resolution_clock::now();
+  start = std::chrono::high_resolution_clock::now();
 
   if (mysql_real_query(con, query, q_len) )
   {
@@ -202,6 +238,10 @@ err:
   sm->get_query_key(lookup_key, &lookup_key_len, query, q_len);
   lookup_key[lookup_key_len] = 0;
   sm->q_stats.record_query(lookup_key, elapsed.count());
+
+  if (query != query_pkt->query())
+    delete[] query;
+
   return ret;
 }
 
@@ -366,6 +406,10 @@ void Mysql_stream::handle_packet_complete()
 
     for (Mysql_packet* p = next_p; p; )
     {
+      // for fragmented query packets
+      if (p->in)
+        register_replay_packet(p);
+
       Mysql_packet* tmp = p->next;
       
       if (p != last)
