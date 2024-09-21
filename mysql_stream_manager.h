@@ -9,6 +9,7 @@
 #include "mysql_stream.h"
 #include "mysql_packet.h"
 #include "query_pattern.h"
+#include "ip_stream.h"
 #include <vector>
 #include <float.h>
 #include <chrono>
@@ -86,6 +87,7 @@ public:
     bool first_packet_ts_inited;
     int replay_fd;
     bool in_replay_write;
+    IP_stream ip_stream;
 
     Mysql_stream_manager(u_int mysql_ip, u_int mysql_port, param_info* info) : mysql_ip(mysql_ip), mysql_port(mysql_port),
         info(info), explain_con(NULL), first_packet_ts_inited(false),

@@ -32,10 +32,13 @@ public:
     std::mutex eof_lock;
     std::condition_variable eof_cond;
     bool reached_eof;
+    u_int last_tcp_seq;
+    bool last_tcp_seq_inited;
 
     Mysql_stream(Mysql_stream_manager* sm, u_int src_ip, u_short src_port, u_int dst_ip, u_short dst_port):
         sm(sm),src_port(src_port),src_ip(src_ip),dst_ip(dst_ip),
-        dst_port(dst_port),first(0),last(0),last_query(0),cur_pkt_hdr_len(0),con(0),th(0),reached_eof(0)
+        dst_port(dst_port),first(0),last(0),last_query(0),cur_pkt_hdr_len(0),con(0),th(0),reached_eof(0),
+        last_tcp_seq(0),last_tcp_seq_inited(false)
     {
     }
 
@@ -72,6 +75,18 @@ public:
     u_longlong get_key(Mysql_packet* pkt);
     void register_stream_end(struct timeval ts);
     void append_packet(Mysql_packet* pkt);
+
+    bool register_tcp_seq(u_int seq)
+    {
+        if (!last_tcp_seq_inited || seq - last_tcp_seq > 0) // works even if the sequence wraps
+        {
+            last_tcp_seq_inited = true;
+            last_tcp_seq = seq;
+            return true;
+        }
+
+        return false;
+    }
 
 };
 #endif

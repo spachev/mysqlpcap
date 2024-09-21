@@ -12,47 +12,6 @@
 
 
 
-/* IP header */
-struct sniff_ip {
-        u_char  ip_vhl;                 /* version << 4 | header length >> 2 */
-        u_char  ip_tos;                 /* type of service */
-        u_short ip_len;                 /* total length */
-        u_short ip_id;                  /* identification */
-        u_short ip_off;                 /* fragment offset field */
-        #define IP_RF 0x8000            /* reserved fragment flag */
-        #define IP_DF 0x4000            /* don't fragment flag */
-        #define IP_MF 0x2000            /* more fragments flag */
-        #define IP_OFFMASK 0x1fff       /* mask for fragmenting bits */
-        u_char  ip_ttl;                 /* time to live */
-        u_char  ip_p;                   /* protocol */
-        u_short ip_sum;                 /* checksum */
-        struct  in_addr ip_src,ip_dst;  /* source and dest address */
-};
-
-/* TCP header */
-typedef u_int tcp_seq;
-
-struct sniff_tcp {
-        u_short th_sport;               /* source port */
-        u_short th_dport;               /* destination port */
-        tcp_seq th_seq;                 /* sequence number */
-        tcp_seq th_ack;                 /* acknowledgement number */
-        u_char  th_offx2;               /* data offset, rsvd */
-#define TH_OFF(th)      (((th)->th_offx2 & 0xf0) >> 4)
-        u_char  th_flags;
-        #define TH_FIN  0x01
-        #define TH_SYN  0x02
-        #define TH_RST  0x04
-        #define TH_PUSH 0x08
-        #define TH_ACK  0x10
-        #define TH_URG  0x20
-        #define TH_ECE  0x40
-        #define TH_CWR  0x80
-        #define TH_FLAGS        (TH_FIN|TH_SYN|TH_RST|TH_ACK|TH_URG|TH_ECE|TH_CWR)
-        u_short th_win;                 /* window */
-        u_short th_sum;                 /* checksum */
-        u_short th_urp;                 /* urgent pointer */
-};
 
 void Mysql_stream_manager::cleanup()
 {
@@ -222,26 +181,65 @@ static bool could_be_query(const u_char* data, u_int len)
 bool Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u_char* packet)
 {
     int tcp_header_len;
+    const struct sniff_tcp* tcp_header;
+
     const struct sniff_ip* ip_header = get_ip_header(info, packet);
     if (header->caplen < (char*)ip_header + sizeof(*ip_header) - (char*)packet ||
         ip_header->ip_p != 6 /* tcp */)
             return false;
 
-    const struct sniff_tcp* tcp_header = get_tcp_header(info, packet, &tcp_header_len);
-    const u_char* data = (const u_char*)tcp_header + tcp_header_len;
-    bool in = (ntohl(ip_header->ip_dst.s_addr) == ntohl(mysql_ip) &&
-        ntohs(tcp_header->th_dport) == mysql_port);
+
+    if (ip_header->ip_off & IP_MF)
+    {
+        u_short ip_header_len = ((*(char*)ip_header) & 0x0F) * 4;
+        if (header->caplen < info->ethernet_header_size + ip_header_len)
+            return false;
+        u_short data_len = header->caplen - info->ethernet_header_size - ip_header_len;
+        ip_stream.enqueue(ip_header, (char*)ip_header + ip_header_len, data_len);
+        return true;
+    }
+
+    const u_char* data;
+    bool has_more_fragments = false;
     u_int len;
 
-    if (header->caplen < (char*)data - (char*)packet)
-        return false; //skip weird packets
+    if (ip_stream.has_fragments(ip_header->ip_id))
+    {
+        u_int frag_len;
+        if (!ip_stream.get_first_fragment(ip_header->ip_id, (char**)&data, &frag_len))
+            assert(0); // BUG
+        tcp_header = (struct sniff_tcp*)data;
+        if (frag_len < sizeof(struct sniff_tcp))
+            assert(0); // BUG
+        tcp_header_len = (((*((char*)tcp_header + 12)) & 0xF0) >> 4) * 4;
+        if (frag_len < tcp_header_len)
+            return false;
 
-    len = header->caplen - ((char*)data - (char*)packet);
+        data += tcp_header_len;
+        len = frag_len - tcp_header_len;
+        has_more_fragments = true;
+    }
+    else
+    {
+        tcp_header = get_tcp_header(info, packet, &tcp_header_len);
+        data = (const u_char*)tcp_header + tcp_header_len;
+
+        if (header->caplen < (char*)data - (char*)packet)
+            return false; //skip weird packets
+
+        len = header->caplen - ((char*)data - (char*)packet);
+    }
+
+    bool in = (ntohl(ip_header->ip_dst.s_addr) == ntohl(mysql_ip) &&
+        ntohs(tcp_header->th_dport) == mysql_port);
+
+
     if (ntohs(tcp_header->th_sport) != mysql_port && ntohs(tcp_header->th_dport) != mysql_port)
         return false;
 
     u_longlong key = in ? get_key(ip_header->ip_src.s_addr, tcp_header->th_sport) :
         get_key(ip_header->ip_dst.s_addr, tcp_header->th_dport);
+
 
     Mysql_stream *s;
     std::map<u_longlong, Mysql_stream*>::iterator it;
@@ -278,13 +276,24 @@ bool Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u
         return true;
 
     DEBUG_MSG("key=%llu in=%d len=%u flags=%u", key, in, len, tcp_header->th_flags);
+
     if (!first_packet_ts_inited)
     {
         first_packet_ts = header->ts;
         first_packet_ts_inited = true;
     }
 
+    // for now we only filter out the retransmits
+    // TODO: deal with out of order packets
+    if (!s->register_tcp_seq(tcp_header->th_seq))
+        return false;
+
     s->append(header->ts, data, len, in);
+
+    if (has_more_fragments)
+    {
+       ip_stream.append_remaining_packets(ip_header->ip_id, s, header->ts, in);
+    }
 
     return true; // for now
 }

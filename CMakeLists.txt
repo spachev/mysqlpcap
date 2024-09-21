@@ -5,7 +5,7 @@ find_package(MySQL)
 set(CMAKE_CXX_FLAGS "--std=c++11 -g -O3 ${CMAKE_CXX_FLAGS}")
 find_library(MYSQL_LIB NAMES mysqlclient HINTS ${CMAKE_PREFIX_PATH}/mysql )
 add_executable(mysqlpcap mysqlpcap.cc mysql_stream.cc mysql_packet.cc mysql_stream_manager.cc
-    query_pattern.cc)
+    query_pattern.cc ip_stream.cc)
 add_executable(test_query_pattern query_pattern.cc)
 SET_TARGET_PROPERTIES(test_query_pattern PROPERTIES COMPILE_FLAGS "-DTEST_QUERY_PATTERN")
 target_include_directories(mysqlpcap PRIVATE ${MYSQL_INCLUDE_DIR})
