@@ -30,7 +30,8 @@ const char* Query_pattern::apply(const char* subject, size_t subject_len, char* 
   if (rc < 0)
   {
     std::stringstream ss;
-    ss << "Error applying regex for " << subject;
+    ss << "Error applying regex for ";
+    ss.write(subject, subject_len);
     throw Query_pattern_exception(ss.str().c_str());
   }
 
