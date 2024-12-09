@@ -3,6 +3,7 @@
 
 #include <pcap.h>
 #include <mysql.h>
+#include <mysqld_error.h>
 #include "mysql_packet.h"
 #include "common.h"
 
@@ -75,6 +76,11 @@ public:
     u_longlong get_key(Mysql_packet* pkt);
     void register_stream_end(struct timeval ts);
     void append_packet(Mysql_packet* pkt);
+
+    bool starting_packet()
+    {
+        return !last || last->is_complete();
+    }
 
     bool register_tcp_seq(u_int seq)
     {

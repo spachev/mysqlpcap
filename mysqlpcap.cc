@@ -27,6 +27,7 @@ enum {
   PROGRESS,
   RECORD_FOR_REPLAY,
   ASSERT_ON_QUERY_ERROR,
+  IGNORE_DUP_KEY_ERRORS,
 };
 
 const char* replay_host = 0;
@@ -63,6 +64,7 @@ static struct option long_options[] =
   {"progress", no_argument, 0, PROGRESS},
   {"record-for-replay", required_argument, 0, RECORD_FOR_REPLAY},
   {"assert-on-query-error", no_argument, 0, ASSERT_ON_QUERY_ERROR},
+  {"ignore-dup-key-errors", no_argument, 0, IGNORE_DUP_KEY_ERRORS},
   {0, 0, 0, 0}
 };
 
@@ -123,6 +125,9 @@ void parse_args(int argc, char** argv)
         break;
       case ASSERT_ON_QUERY_ERROR:
           info.assert_on_query_error = true;
+          break;
+      case IGNORE_DUP_KEY_ERRORS:
+          info.ignore_dup_key_errors = true;
           break;
       case REPLAY_HOST:
         replay_host = optarg;

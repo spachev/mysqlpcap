@@ -27,10 +27,19 @@ const char* Query_pattern::apply(const char* subject, size_t subject_len, char* 
                              PCRE2_SUBSTITUTE_GLOBAL | PCRE2_SUBSTITUTE_EXTENDED, 0, 0,
                              (PCRE2_SPTR)replace_str.c_str(),
                              replace_str.length(), (PCRE2_UCHAR*)output_buf, out_len);
+
+  if (rc == PCRE2_ERROR_NOMEMORY) // likely no match thus no replacement and the query is bigger than output_buf
+      return NULL;
+
   if (rc < 0)
   {
     std::stringstream ss;
+    unsigned char err_msg[1024];
     ss << "Error applying regex for " << subject;
+    if (pcre2_get_error_message(rc, err_msg, sizeof(err_msg)) > 0)
+    {
+        ss << ": " << err_msg;
+    }
     throw Query_pattern_exception(ss.str().c_str());
   }
 

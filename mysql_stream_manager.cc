@@ -168,13 +168,14 @@ char *strncasestr(const char *haystack, const char *needle, size_t len)
 
 static bool could_be_query(const u_char* data, u_int len)
 {
-    const char* haystack = (char*)data + 4; // at this point could be invalid
-    size_t cmp_len = len - 4;
-    return len > 4 && data[3] == 0x3 && (strncasestr(haystack, "select", cmp_len) ||
+    const char* haystack = (char*)data + 5; // at this point could be invalid
+    size_t cmp_len = len - 5;
+    return len > 4 && data[4] == 0x3 && (strncasestr(haystack, "select", cmp_len) ||
         strncasestr(haystack, "update", cmp_len) ||
         strncasestr(haystack, "delete", cmp_len) ||
         strncasestr(haystack, "alter", cmp_len) ||
-        strncasestr(haystack, "call", cmp_len)
+        strncasestr(haystack, "call", cmp_len) ||
+        strncasestr(haystack, "show", cmp_len)
     );
 }
 
@@ -286,6 +287,9 @@ bool Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u
     // for now we only filter out the retransmits
     // TODO: deal with out of order packets
     if (!s->register_tcp_seq(tcp_header->th_seq))
+        return false;
+
+    if (in && (s->starting_packet() &&  !could_be_query(data, len))) // crude hack to filter out client authentication packets
         return false;
 
     s->append(header->ts, data, len, in);
@@ -481,8 +485,9 @@ void Query_stats::print()
             it != lookup.end(); it++)
     {
         Query_pattern_stats* s = it->second;
-        std::cout << "Query Pattern ID: " << it->first << "N: " << s->n_queries << " min: "
-            << s->min_exec_time << "s max: " << s->max_exec_time << "s" << std::endl;
+        std::cout << "Query Pattern ID: " << it->first << " N: " << s->n_queries << " min: "
+            << s->min_exec_time << "s max: " << s->max_exec_time << "s" <<
+            " avg: " << s->total_exec_time / s->n_queries << "s total time " << s->total_exec_time << "s" << std::endl;
     }
 
 }
@@ -549,7 +554,10 @@ void parse_re_part(char* output, const char** argp, const char* arg_end)
     {
         if (in_esc)
         {
+            if (*arg != '/')
+                *p++ = '\\';
             *p++ = *arg++;
+            in_esc = 0;
             continue;
         }
 

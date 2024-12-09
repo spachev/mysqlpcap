@@ -211,9 +211,13 @@ bool Mysql_stream::db_query(Mysql_query_packet* query_pkt)
 
   start = std::chrono::high_resolution_clock::now();
 
-  if (mysql_real_query(con, query, q_len) )
+  if (mysql_real_query(con, query, q_len))
   {
     fprintf(stderr, "Error running query: %.*s : %s\n", q_len, query, mysql_error(con));
+
+    if (sm->info->ignore_dup_key_errors && mysql_errno(con) == ER_DUP_ENTRY)
+        goto err;
+
     if (sm->info->assert_on_query_error)
       assert(false);
     goto err;
