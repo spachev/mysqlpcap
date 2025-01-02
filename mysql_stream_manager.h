@@ -40,7 +40,7 @@ struct Query_stats
 
     ~Query_stats();
     void record_query(const char* lookup_key, double exec_time);
-    void print();
+    void print(FILE* csv_fp);
 };
 
 struct param_info
@@ -55,10 +55,11 @@ struct param_info
     bool assert_on_query_error;
     off_t pcap_file_size;
     bool ignore_dup_key_errors;
+    const char* csv_file;
 
     param_info():n_slow_queries(0), ethernet_header_size(14), do_explain(0),
         do_analyze(0), do_run(0),report_progress(false),assert_on_query_error(false), pcap_file_size(0),
-        ignore_dup_key_errors(false)
+        ignore_dup_key_errors(false),csv_file(0)
     {
     }
 
@@ -90,10 +91,11 @@ public:
     int replay_fd;
     bool in_replay_write;
     IP_stream ip_stream;
+    FILE* csv_fp;
 
     Mysql_stream_manager(u_int mysql_ip, u_int mysql_port, param_info* info) : mysql_ip(mysql_ip), mysql_port(mysql_port),
         info(info), explain_con(NULL), first_packet_ts_inited(false),
-        replay_fd(-1),in_replay_write(false) {}
+        replay_fd(-1),in_replay_write(false),csv_fp(NULL) {}
     ~Mysql_stream_manager() { cleanup();}
 
     static u_longlong get_key(u_int dst_ip, u_int dst_port)

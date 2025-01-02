@@ -28,6 +28,7 @@ enum {
   RECORD_FOR_REPLAY,
   ASSERT_ON_QUERY_ERROR,
   IGNORE_DUP_KEY_ERRORS,
+  CSV,
 };
 
 const char* replay_host = 0;
@@ -65,6 +66,7 @@ static struct option long_options[] =
   {"record-for-replay", required_argument, 0, RECORD_FOR_REPLAY},
   {"assert-on-query-error", no_argument, 0, ASSERT_ON_QUERY_ERROR},
   {"ignore-dup-key-errors", no_argument, 0, IGNORE_DUP_KEY_ERRORS},
+  {"csv", required_argument, 0, CSV},
   {0, 0, 0, 0}
 };
 
@@ -155,6 +157,9 @@ void parse_args(int argc, char** argv)
         break;
       case RECORD_FOR_REPLAY:
         record_for_replay_file = optarg;
+        break;
+      case CSV:
+        info.csv_file = optarg;
         break;
       default:
         die("Invalid option -%c", c);

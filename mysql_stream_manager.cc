@@ -15,6 +15,12 @@
 
 void Mysql_stream_manager::cleanup()
 {
+    if (csv_fp)
+    {
+        fclose(csv_fp);
+        csv_fp = NULL;
+    }
+
     for (std::multiset<Mysql_query_packet*, Mysql_query_packet_time_cmp>::iterator it = slow_queries.begin();
          it != slow_queries.end(); it++)
     {
@@ -47,6 +53,13 @@ void Mysql_stream_manager::cleanup()
 
 void Mysql_stream_manager::init_replay()
 {
+    if (info->csv_file)
+    {
+        csv_fp = fopen(info->csv_file, "w");
+        if (!csv_fp)
+            throw std::runtime_error("Could not open csv file");
+    }
+
     replay_start_ts = std::chrono::high_resolution_clock::now();
 }
 
@@ -477,9 +490,13 @@ void Mysql_stream_manager::get_query_key(char* key_buf, size_t* key_buf_len, con
     *key_buf = 0;
 }
 
-void Query_stats::print()
+void Query_stats::print(FILE* csv_fp)
 {
     std::cout << "Overall N: " << n_queries << " total time " << total_exec_time << std:: endl;
+
+    if (csv_fp)
+        fputs("Query Pattern ID, N, Minimum execution time, Maximum Execution Time, Average Execution Time,"
+        "Total Execution Time\n", csv_fp);
 
     for (std::map<std::string, Query_pattern_stats*>::iterator it = lookup.begin();
             it != lookup.end(); it++)
@@ -488,6 +505,11 @@ void Query_stats::print()
         std::cout << "Query Pattern ID: " << it->first << " N: " << s->n_queries << " min: "
             << s->min_exec_time << "s max: " << s->max_exec_time << "s" <<
             " avg: " << s->total_exec_time / s->n_queries << "s total time " << s->total_exec_time << "s" << std::endl;
+
+        // TODO: escape quotes
+        if (csv_fp)
+            fprintf(csv_fp, "\"%s\",%lu,%f,%f,%f,%f", it->first.c_str(), s->n_queries, s->min_exec_time, s->max_exec_time,
+                    s->total_exec_time / s->n_queries, s->total_exec_time);
     }
 
 }
@@ -538,7 +560,7 @@ void Mysql_stream_manager::finish_replay()
         s->end_replay();
     }
 
-    q_stats.print();
+    q_stats.print(csv_fp);
 }
 
 
