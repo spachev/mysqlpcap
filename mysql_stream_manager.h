@@ -13,6 +13,7 @@
 #include <vector>
 #include <float.h>
 #include <chrono>
+#include <algorithm>
 
 struct Query_pattern_stats
 {
@@ -20,12 +21,38 @@ struct Query_pattern_stats
     double max_exec_time;
     double total_exec_time;
     size_t n_queries;
+    std::vector<double> exec_times;
 
     Query_pattern_stats():min_exec_time(DBL_MAX),max_exec_time(0.0),total_exec_time(0.0),n_queries(0)
     {
     }
 
     void record_query(double exec_time);
+    void finalize();
+    double get_median_exec_time()
+    {
+        if (exec_times.size() == 0)
+            return 0.0;
+
+        if (exec_times.size() % 2)
+            return exec_times[exec_times.size() / 2];
+
+        int pos = exec_times.size() / 2;
+
+        return (exec_times[pos] + exec_times[pos - 1])/2.0;
+    }
+
+    double get_pct_exec_time(int pct)
+    {
+        int pos = exec_times.size() * pct / 100 - 1;
+
+        if (pos <= 0)
+            pos = 0;
+        if (pos >= exec_times.size())
+            pos = exec_times.size() - 1;
+
+        return exec_times[pos];
+    }
 };
 
 struct Query_stats
@@ -41,6 +68,7 @@ struct Query_stats
     ~Query_stats();
     void record_query(const char* lookup_key, double exec_time);
     void print(FILE* csv_fp);
+    void finalize();
 };
 
 struct param_info
@@ -122,6 +150,7 @@ public:
     u_longlong get_ellapsed_us();
     u_longlong get_packet_ellapsed_us(Mysql_packet* p);
     std::chrono::time_point<std::chrono::high_resolution_clock> get_scheduled_ts(Mysql_packet* p);
+    void print_query_stats();
 };
 
 #endif

@@ -248,6 +248,8 @@ void process_pcap_file(const char* fname)
 
   if (info.do_run)
     sm.finish_replay();
+
+  sm.print_query_stats();
 }
 
 void init_file_size(const char* fname)

@@ -441,6 +441,7 @@ u_longlong Mysql_stream_manager::get_packet_ellapsed_us(Mysql_packet* p)
 void Mysql_stream_manager::register_query(Mysql_stream* s, Mysql_query_packet* query)
 {
     query->mark_ref();
+    // TODO: if we are doing a replay, we should fill up the slow query list based on replay, not the original
     slow_queries.insert(query);
 
     if (slow_queries.size() > info->n_slow_queries)
@@ -449,6 +450,15 @@ void Mysql_stream_manager::register_query(Mysql_stream* s, Mysql_query_packet* q
         Mysql_query_packet* p = *it;
         slow_queries.erase(it);
         s->consider_unlink_pkt(p);
+    }
+
+    if (!info->do_run)
+    {
+        char lookup_key[1024];
+        size_t lookup_key_len = sizeof(lookup_key) - 1;
+        get_query_key(lookup_key, &lookup_key_len, query->query(), query->query_len());
+        lookup_key[lookup_key_len] = 0;
+        q_stats.record_query(lookup_key, query->exec_time);
     }
 }
 
@@ -490,13 +500,22 @@ void Mysql_stream_manager::get_query_key(char* key_buf, size_t* key_buf_len, con
     *key_buf = 0;
 }
 
+void Query_stats::finalize()
+{
+    for (std::map<std::string, Query_pattern_stats*>::iterator it = lookup.begin();
+            it != lookup.end(); it++)
+    {
+        it->second->finalize();
+    }
+ }
+
 void Query_stats::print(FILE* csv_fp)
 {
     std::cout << "Overall N: " << n_queries << " total time " << total_exec_time << std:: endl;
 
     if (csv_fp)
         fputs("Query Pattern ID, N, Minimum execution time, Maximum Execution Time, Average Execution Time,"
-        "Total Execution Time\n", csv_fp);
+        "Median Execution Time, 95pct Execution Time,Total Execution Time\n", csv_fp);
 
     for (std::map<std::string, Query_pattern_stats*>::iterator it = lookup.begin();
             it != lookup.end(); it++)
@@ -508,8 +527,11 @@ void Query_stats::print(FILE* csv_fp)
 
         // TODO: escape quotes
         if (csv_fp)
-            fprintf(csv_fp, "\"%s\",%lu,%f,%f,%f,%f", it->first.c_str(), s->n_queries, s->min_exec_time, s->max_exec_time,
-                    s->total_exec_time / s->n_queries, s->total_exec_time);
+            fprintf(csv_fp, "\"%s\",%lu,%f,%f,%f,%f,%f,%f\n", it->first.c_str(), s->n_queries, s->min_exec_time,
+                    s->max_exec_time,
+                    s->total_exec_time / s->n_queries, s->get_median_exec_time(),
+                    s->get_pct_exec_time(95),
+                    s->total_exec_time);
     }
 
 }
@@ -522,6 +544,13 @@ void Query_pattern_stats::record_query(double exec_time)
         min_exec_time = exec_time;
     if (exec_time > max_exec_time)
         max_exec_time = exec_time;
+
+    exec_times.push_back(exec_time);
+}
+
+void Query_pattern_stats::finalize()
+{
+    std::sort(exec_times.begin(), exec_times.end());
 }
 
 Query_stats::~Query_stats()
@@ -560,9 +589,13 @@ void Mysql_stream_manager::finish_replay()
         s->end_replay();
     }
 
-    q_stats.print(csv_fp);
 }
 
+void Mysql_stream_manager::print_query_stats()
+{
+    q_stats.finalize();
+    q_stats.print(csv_fp);
+}
 
 #define MAX_PATTERN_LEN 8192
 
