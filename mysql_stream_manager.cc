@@ -10,15 +10,18 @@
 #include "common.h"
 #include "mysql_stream_manager.h"
 
-
-
-
 void Mysql_stream_manager::cleanup()
 {
     if (csv_fp)
     {
         fclose(csv_fp);
         csv_fp = NULL;
+    }
+
+    if (table_stats_fp)
+    {
+        fclose(table_stats_fp);
+        table_stats_fp = NULL;
     }
 
     for (std::multiset<Mysql_query_packet*, Mysql_query_packet_time_cmp>::iterator it = slow_queries.begin();
@@ -53,13 +56,6 @@ void Mysql_stream_manager::cleanup()
 
 void Mysql_stream_manager::init_replay()
 {
-    if (info->csv_file)
-    {
-        csv_fp = fopen(info->csv_file, "w");
-        if (!csv_fp)
-            throw std::runtime_error("Could not open csv file");
-    }
-
     replay_start_ts = std::chrono::high_resolution_clock::now();
 }
 
@@ -459,6 +455,9 @@ void Mysql_stream_manager::register_query(Mysql_stream* s, Mysql_query_packet* q
         get_query_key(lookup_key, &lookup_key_len, query->query(), query->query_len());
         lookup_key[lookup_key_len] = 0;
         q_stats.record_query(lookup_key, query->exec_time);
+
+        if (table_stats_fp)
+            table_stats.update_from_query(query->query(), query->query_len());
     }
 }
 
@@ -581,6 +580,23 @@ void Query_stats::record_query(const char* lookup_key, double exec_time)
     s->record_query(exec_time);
 }
 
+void Mysql_stream_manager::init()
+{
+    if (info->csv_file)
+    {
+        csv_fp = fopen(info->csv_file, "w");
+        if (!csv_fp)
+            throw std::runtime_error("Could not open csv file");
+    }
+
+    if (info->table_stats_file)
+    {
+        table_stats_fp = fopen(info->table_stats_file, "w");
+        if (!table_stats_fp)
+            throw std::runtime_error("Could not open the table stats file");
+    }
+}
+
 void Mysql_stream_manager::finish_replay()
 {
     for (std::map<u_longlong, Mysql_stream*>::iterator it = lookup.begin(); it != lookup.end(); it++)
@@ -588,7 +604,6 @@ void Mysql_stream_manager::finish_replay()
         Mysql_stream* s = it->second;
         s->end_replay();
     }
-
 }
 
 void Mysql_stream_manager::print_query_stats()
@@ -596,6 +611,12 @@ void Mysql_stream_manager::print_query_stats()
     q_stats.finalize();
     q_stats.print(csv_fp);
 }
+
+void Mysql_stream_manager::print_table_stats()
+{
+    table_stats.print(table_stats_fp);
+}
+
 
 #define MAX_PATTERN_LEN 8192
 

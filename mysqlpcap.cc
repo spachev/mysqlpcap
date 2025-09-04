@@ -18,7 +18,7 @@
 #include "mysql_stream_manager.h"
 
 enum {
-  REPLAY_HOST=240,
+  REPLAY_HOST=230,
   REPLAY_PORT,
   REPLAY_USER,
   REPLAY_PW,
@@ -29,6 +29,7 @@ enum {
   ASSERT_ON_QUERY_ERROR,
   IGNORE_DUP_KEY_ERRORS,
   CSV,
+  TABLE_STATS
 };
 
 const char* replay_host = 0;
@@ -67,6 +68,7 @@ static struct option long_options[] =
   {"assert-on-query-error", no_argument, 0, ASSERT_ON_QUERY_ERROR},
   {"ignore-dup-key-errors", no_argument, 0, IGNORE_DUP_KEY_ERRORS},
   {"csv", required_argument, 0, CSV},
+  {"table-stats", required_argument, 0, TABLE_STATS},
   {0, 0, 0, 0}
 };
 
@@ -161,6 +163,9 @@ void parse_args(int argc, char** argv)
       case CSV:
         info.csv_file = optarg;
         break;
+      case TABLE_STATS:
+        info.table_stats_file = optarg;
+        break;
       default:
         die("Invalid option -%c", c);
     }
@@ -250,6 +255,9 @@ void process_pcap_file(const char* fname)
     sm.finish_replay();
 
   sm.print_query_stats();
+
+  if (info.table_stats_file)
+      sm.print_table_stats();
 }
 
 void init_file_size(const char* fname)
