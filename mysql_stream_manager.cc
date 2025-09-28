@@ -74,6 +74,16 @@ bool Mysql_stream_manager::connect_for_explain()
         return false;
     }
 
+    try
+    {
+      setup_for_ssl(explain_con, replay_ssl_ca, replay_ssl_cert, replay_ssl_key);
+    }
+    catch (std::runtime_error e)
+    {
+        fprintf(stderr, "Error initializing SSL: %s\n", e.what());
+        return false;
+    }
+
     if (!mysql_real_connect(explain_con, replay_host, replay_user, replay_pw, replay_db,
         replay_port, NULL, 0))
     {

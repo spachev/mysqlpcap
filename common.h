@@ -21,6 +21,9 @@ extern const char* replay_host;
 extern const char* replay_user;
 extern const char* replay_pw;
 extern const char* replay_db;
+extern const char* replay_ssl_ca;
+extern const char* replay_ssl_cert;
+extern const char* replay_ssl_key;
 extern uint replay_port;
 extern double replay_speed;
 

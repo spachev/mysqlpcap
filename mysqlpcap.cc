@@ -23,6 +23,9 @@ enum {
   REPLAY_USER,
   REPLAY_PW,
   REPLAY_DB,
+  REPLAY_SSL_CA,
+  REPLAY_SSL_CERT,
+  REPLAY_SSL_KEY,
   REPLAY_SPEED,
   PROGRESS,
   RECORD_FOR_REPLAY,
@@ -36,6 +39,9 @@ const char* replay_host = 0;
 const char* replay_user = 0;
 const char* replay_pw = 0;
 const char* replay_db = 0;
+const char* replay_ssl_cert = 0;
+const char* replay_ssl_ca = 0;
+const char* replay_ssl_key = 0;
 const char* record_for_replay_file = 0;
 
 
@@ -59,6 +65,9 @@ static struct option long_options[] =
   {"replay-port", required_argument, 0, REPLAY_PORT},
   {"replay-user", required_argument, 0, REPLAY_USER},
   {"replay-pw", required_argument, 0, REPLAY_PW},
+  {"replay-ssl-ca", required_argument, 0, REPLAY_SSL_CA},
+  {"replay-ssl-cert", required_argument, 0, REPLAY_SSL_CERT},
+  {"replay-ssl-key", required_argument, 0, REPLAY_SSL_KEY},
   {"replay-host", required_argument, 0, REPLAY_HOST},
   {"replay-db", required_argument, 0, REPLAY_DB},
   {"replay-speed", required_argument, 0, REPLAY_SPEED},
@@ -144,6 +153,15 @@ void parse_args(int argc, char** argv)
         break;
       case REPLAY_DB:
         replay_db = optarg;
+        break;
+      case REPLAY_SSL_CA:
+        replay_ssl_ca = optarg;
+        break;
+      case REPLAY_SSL_CERT:
+        replay_ssl_cert = optarg;
+        break;
+      case REPLAY_SSL_KEY:
+        replay_ssl_key = optarg;
         break;
       case REPLAY_PORT:
         replay_port = atoi(optarg);

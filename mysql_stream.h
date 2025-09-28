@@ -12,6 +12,7 @@
 #include <condition_variable>
 
 class Mysql_stream_manager;
+void setup_for_ssl(MYSQL* con, const char* ssl_ca, const char* ssl_cert, const char* ssl_key);
 
 class Mysql_stream
 {

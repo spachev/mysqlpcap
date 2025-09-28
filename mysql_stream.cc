@@ -5,6 +5,35 @@
 #include "mysql_stream.h"
 #include "mysql_stream_manager.h"
 
+void setup_for_ssl(MYSQL* con, const char* ssl_ca, const char* ssl_cert, const char* ssl_key)
+{
+    if (con == NULL)
+    {
+        throw std::runtime_error("MYSQL connection handle is NULL.");
+    }
+
+    enum mysql_ssl_mode mode = SSL_MODE_VERIFY_CA;
+    if (mysql_options(con, MYSQL_OPT_SSL_MODE, &mode))
+    {
+        throw std::runtime_error(std::string("Failed to set SSL_MODE_VERIFY_IDENTITY: ") + mysql_error(con));
+    }
+
+    if (ssl_ca != NULL && mysql_options(con, MYSQL_OPT_SSL_CA, ssl_ca))
+    {
+        throw std::runtime_error(std::string("Failed to set SSL CA file path: ") + mysql_error(con));
+    }
+
+    if (ssl_cert != NULL && mysql_options(con, MYSQL_OPT_SSL_CERT, ssl_cert))
+    {
+        throw std::runtime_error(std::string("Failed to set SSL client certificate: ") + mysql_error(con));
+    }
+
+    if (ssl_key != NULL && mysql_options(con, MYSQL_OPT_SSL_KEY, ssl_key))
+    {
+        throw std::runtime_error(std::string("Failed to set SSL client key: ") + mysql_error(con));
+    }
+}
+
 void Mysql_stream::start_replay()
 {
   th = new std::thread(&Mysql_stream::run_replay, this);
@@ -125,6 +154,16 @@ bool Mysql_stream::db_connect()
   if (!(con = mysql_init(NULL)))
   {
     fprintf(stderr, "Error initializing stream replay connection\n");
+    return false;
+  }
+
+  try
+  {
+    setup_for_ssl(con, replay_ssl_ca, replay_ssl_cert, replay_ssl_key);
+  }
+  catch (std::runtime_error e)
+  {
+    fprintf(stderr, "Error initializing SSL: %s\n", e.what());
     return false;
   }
 
