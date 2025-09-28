@@ -12,12 +12,6 @@ void setup_for_ssl(MYSQL* con, const char* ssl_ca, const char* ssl_cert, const c
         throw std::runtime_error("MYSQL connection handle is NULL.");
     }
 
-    enum mysql_ssl_mode mode = SSL_MODE_VERIFY_CA;
-    if (mysql_options(con, MYSQL_OPT_SSL_MODE, &mode))
-    {
-        throw std::runtime_error(std::string("Failed to set SSL_MODE_VERIFY_IDENTITY: ") + mysql_error(con));
-    }
-
     if (ssl_ca != NULL && mysql_options(con, MYSQL_OPT_SSL_CA, ssl_ca))
     {
         throw std::runtime_error(std::string("Failed to set SSL CA file path: ") + mysql_error(con));
