@@ -1,0 +1,126 @@
+# ----------------------------------------------------------------------
+# RPM Spec File for mysqlpcap
+# Targets: RHEL 7 (CentOS 7) and RHEL 8 (CentOS 8 / AlmaLinux / Rocky Linux)
+# ----------------------------------------------------------------------
+
+%define mariadb_version 10.4.20
+Source0:        %{name}-%{version}.tar.gz
+Source1:        mariadb-%{mariadb_version}.tar.gz
+URL:            https://downloads.mariadb.org/mariadb/%{mariadb_version}/source/mariadb-%{mariadb_version}.tar.gz
+
+Name:           mysqlpcap
+Version:        @MYSQLPCAP_VERSION@
+Release:        1%{?dist}
+Summary:        MySQL packet analysis tool using libpcap
+License:        GPLv2 
+BuildArch:      x86_64
+# Ensure the source archive includes the CMakeLists.txt and all .cc files.
+
+# --- Build Requires ---
+# Requires to build the package on RHEL 7 and RHEL 8
+BuildRequires:  cmake >= 2.8
+BuildRequires:  make
+BuildRequires:  pkgconfig
+BuildRequires:  curl
+
+# RHEL 7 Specific Build Requires: Now requires devtoolset-8 for GCC 8
+%if 0%{?rhel} == 7
+BuildRequires:  devtoolset-8-gcc-c++
+BuildRequires:  libpcap-devel
+BuildRequires:  pcre2-devel
+%endif
+
+# RHEL 8 Specific Build Requires: RHEL 8 already provides GCC 8+ by default
+%if 0%{?rhel} >= 8
+BuildRequires:  gcc-c++
+BuildRequires:  libpcap-devel
+# RHEL 8 usually separates pcre2 development package:
+BuildRequires:  pcre2-devel
+%endif
+BuildRequires:  zlib-devel
+BuildRequires:  openssl-devel
+BuildRequires:  bison
+BuildRequires:  ncurses-devel
+
+# --- Runtime Requires ---
+# Requires for the package to run
+Requires:       libpcap
+Requires:       pcre2
+
+%description
+The mysqlpcap tool captures network packets and analyzes the MySQL protocol
+to extract queries, track streams, and gather table statistics.
+
+# ----------------------------------------------------------------------
+# Prep Section: Unpacks the source code
+# ----------------------------------------------------------------------
+%prep
+
+# Unpack mysqlpcap source
+%autosetup -n %{name}-%{version} -a 0
+
+rm -rf %{_builddir}/mariadb-%{mariadb_version}
+tar -xzf %{_sourcedir}/mariadb-%{mariadb_version}.tar.gz -C %{_builddir}
+cd %{_builddir}/mariadb-%{mariadb_version}
+
+# ----------------------------------------------------------------------
+# Build Section: Executes CMake and compiles the project
+# ----------------------------------------------------------------------
+%build
+%if 0%{?rhel} == 7
+export CC=/opt/rh/devtoolset-8/root/usr/bin/gcc
+export CXX=/opt/rh/devtoolset-8/root/usr/bin/g++
+%endif
+export MARIADB_INSTALL_DIR=%{_builddir}/mariadb-install
+mkdir -p $MARIADB_INSTALL_DIR
+
+# Build MariaDB client library
+cd %{_builddir}/mariadb-%{mariadb_version}
+cmake . \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=$MARIADB_INSTALL_DIR \
+    -DWITH_SSL=system \
+    -DWITH_ZLIB=system \
+    -DBUILD_CONFIG=mysql_release \
+    -DWITH_UNIT_TESTS=OFF \
+    -DPLUGIN_AUTH_PAM=NO \
+    -DWITHOUT_SERVER=ON
+ make -j $(nproc) -C libmariadb
+
+# Manually install necessary files
+mkdir -p $MARIADB_INSTALL_DIR/lib $MARIADB_INSTALL_DIR/include/mysql
+cp libmariadb/libmariadb/libmysqlclient.a $MARIADB_INSTALL_DIR/lib/
+cp -r libmariadb/include/* $MARIADB_INSTALL_DIR/include/mysql/
+
+# Build mysqlpcap
+cd %{_builddir}/%{name}-%{version}
+cmake . \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DMYSQL_INCLUDE_DIR=$MARIADB_INSTALL_DIR/include/mysql \
+    -DMYSQL_LIBRARIES=$MARIADB_INSTALL_DIR/lib/libmysqlclient.a \
+    -DCMAKE_CXX_FLAGS="-DDEBUG_OFF"
+make
+
+# ----------------------------------------------------------------------
+# Install Section: Installs files into the RPM build root
+# ----------------------------------------------------------------------
+%install
+# Install the built files into the DESTDIR
+make install DESTDIR=%{buildroot}
+
+# ----------------------------------------------------------------------
+# Files Section: Lists all files to be included in the final RPM
+# ----------------------------------------------------------------------
+%files
+%{_bindir}/mysqlpcap
+# ----------------------------------------------------------------------
+# Changelog Section
+# ----------------------------------------------------------------------
+%changelog
+* Mon Sep 29 2025 Sasha Pachev <spachev@gmail.com> - 1.0.0-1
+- Initial RPM release for RHEL 7 and RHEL 8.
+- Built with CMake and linked against pcap, pcre2, and mysql libraries.
+- Modified to download and build MariaDB from source and statically link libmysqlclient.a.
+
+

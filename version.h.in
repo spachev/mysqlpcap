@@ -1,0 +1,10 @@
+#pragma once
+
+// Full version string (e.g., "1.0.0")
+#define MYSQLPCAP_VERSION "@MYSQLPCAP_VERSION@"
+
+// Major version number (e.g., 1)
+#define MYSQLPCAP_VERSION_MAJOR @MYSQLPCAP_VERSION_MAJOR@
+
+// Minor version number (e.g., 0)
+#define MYSQLPCAP_VERSION_MINOR @MYSQLPCAP_VERSION_MINOR@

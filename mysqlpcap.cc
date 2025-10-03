@@ -13,8 +13,11 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #include <string.h>
+#include <iostream>
+#include <iomanip>
 
 #include "common.h"
+#include "version.h"
 #include "mysql_stream_manager.h"
 
 enum {
@@ -78,6 +81,8 @@ static struct option long_options[] =
   {"ignore-dup-key-errors", no_argument, 0, IGNORE_DUP_KEY_ERRORS},
   {"csv", required_argument, 0, CSV},
   {"table-stats", required_argument, 0, TABLE_STATS},
+  {"version", no_argument, 0, 'v'},
+  {"help", no_argument, 0, 'H'},
   {0, 0, 0, 0}
 };
 
@@ -94,6 +99,114 @@ void die(const char* msg, ...)
   fputc('\n', stderr);
   va_end(ap);
   exit(1);
+}
+
+void print_version()
+{
+     std::cerr << "mysqlpcap version " << MYSQLPCAP_VERSION << "\n";
+}
+
+void print_usage(const char* prog_name)
+{
+    std::cerr << "Usage: " << prog_name << " [options]\n\n";
+    std::cerr << "Options for MySQL Packet Capture and Analysis:\n\n";
+
+    // Descriptions corresponding to the long_options array (in order).
+    // Note: The descriptions array MUST be kept synchronized with long_options.
+    const std::vector<std::string> descriptions = {
+        "Input pcap file.",
+        "Target server port (used for filtering).",
+        "Target server IP address (used for filtering).",
+        "Print N slowest queries (N is an integer).",
+        "Ethernet header size (default 14, useful for raw packets).",
+        "Explain the top slow queries.",
+        "Analyze queries and generate a performance summary.",
+        "Run or Replay the captured queries against a target MySQL server",
+        "[REPLAY] MySQL host to replay queries against.",
+        "[REPLAY] MySQL port to replay queries against.",
+        "[REPLAY] MySQL username for replay.",
+        "[REPLAY] MySQL password for replay.",
+        "[REPLAY] Path to SSL CA certificate.",
+        "[REPLAY] Path to SSL certificate.",
+        "[REPLAY] Path to SSL key file.",
+        "[REPLAY] Target host for replay.",
+        "[REPLAY] Target database name for replay.",
+        "[REPLAY] Replay speed multiplier (e.g., 0.5 for half speed, 2.0 for double speed).",
+        "Regex to group queries",
+        "Display a progress indicator during processing or replay.",
+        "Record the captured queries into a more compact MCAP file for future replay using less storage.",
+        "[REPLAY] Exit immediately if a query fails during replay.",
+        "[REPLAY] Ignore duplicate key errors during replay.",
+        "Output analysis results to a CSV file at the specified path.",
+        "Output table usage statistics (selects, updates, deletes) to the specified file.",
+        "Print verision and exit",
+        "Print this help message and exit"
+    };
+
+    int desc_index = 0;
+    int max_option_width = 0; // To calculate optimal padding
+
+    // 1. First pass to determine maximum option string width
+    for (int i = 0; long_options[i].name != 0; ++i) {
+        const struct option& opt = long_options[i];
+        std::string option_str;
+        
+        // Add short option if it exists
+        if (opt.val > 0 && opt.val < 256) {
+            option_str += "-" + std::string(1, (char)opt.val) + ", ";
+        } else {
+            option_str += "    "; // Padding for options without a short form
+        }
+
+        option_str += "--" + std::string(opt.name);
+
+        // Add argument type
+        switch (opt.has_arg) {
+            case required_argument: option_str += " <ARG>"; break;
+            case optional_argument: option_str += " [ARG]"; break;
+            default: break;
+        }
+
+        if (option_str.length() > max_option_width) {
+            max_option_width = option_str.length();
+        }
+    }
+
+    // Use a fixed margin for readability
+    const int PADDING_MARGIN = 2; 
+    max_option_width += PADDING_MARGIN;
+
+    // 2. Second pass to print the options with padding
+    for (int i = 0; long_options[i].name != 0; ++i)
+    {
+        const struct option& opt = long_options[i];
+
+        // Check for missing description
+        if (desc_index >= descriptions.size()) {
+            std::cerr << "  (Error: Missing description for --" << opt.name << ")\n";
+            break;
+        }
+        
+        // Construct the option string (Option + Argument Type)
+        std::string option_str;
+        if (opt.val > 0 && opt.val < 256) {
+            option_str += "-" + std::string(1, (char)opt.val) + ", ";
+        } else {
+            option_str += "    ";
+        }
+        option_str += "--" + std::string(opt.name);
+        switch (opt.has_arg) {
+            case required_argument: option_str += " <ARG>"; break;
+            case optional_argument: option_str += " [ARG]"; break;
+            default: break;
+        }
+
+        // Print the option string, followed by padding, and then the description
+        std::cerr << "  " << std::left << std::setw(max_option_width) << option_str
+                  << descriptions[desc_index++] << "\n";
+    }
+
+    std::cerr << "\n";
 }
 
 void parse_args(int argc, char** argv)
@@ -184,6 +297,12 @@ void parse_args(int argc, char** argv)
       case TABLE_STATS:
         info.table_stats_file = optarg;
         break;
+      case 'v':
+        print_version();
+        exit(0);
+      case 'H':
+        print_usage(argv[0]);
+        exit(0);
       default:
         die("Invalid option -%c", c);
     }

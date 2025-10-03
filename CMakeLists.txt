@@ -1,7 +1,10 @@
 cmake_minimum_required(VERSION 2.8)
-set(MYSQLPCAP_VERSION "1.0.0")
+project(mysqlpcap)
+set(MYSQLPCAP_VERSION "1.0.1")
 set(MYSQLPCAP_VERSION_MAJOR 1)
-set(MYSQLPCAP_VERSION_MINOR 0)
+set(MYSQLPCAP_VERSION_MINOR 1)
+configure_file(version.h.in version.h @ONLY)
+configure_file(mysqlpcap.spec.in mysqlpcap.spec @ONLY)
 
 # Set the C++ Standard for all targets (Best effort for C++11 in CMake 2.8)
 # We rely on the CXXFLAGS environment variable or the compiler's default for C++11.
