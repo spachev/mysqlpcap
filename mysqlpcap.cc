@@ -46,7 +46,7 @@ const char* record_for_replay_file = 0;
 
 
 uint replay_port = 3306;
-uint mysql_port = 3306;
+uint _mysql_port = 3306;
 double replay_speed = 1.0;
 
 Perf_stats perf_stats;
@@ -115,7 +115,7 @@ void parse_args(int argc, char** argv)
         fname = optarg;
         break;
       case 'p':
-        mysql_port = atoi(optarg);
+        _mysql_port = atoi(optarg);
         break;
       case 'h':
         if (!inet_aton(optarg, &mysql_ip))
@@ -224,7 +224,7 @@ void process_pcap_file(const char* fname)
     PCAP_DIE("Not able to get fd from the PCAP handle");
 
   // no filter, does not work if the packets have vlan ID in the ethernet header
-  Mysql_stream_manager sm(mysql_ip.s_addr, mysql_port, &info);
+  Mysql_stream_manager sm(mysql_ip.s_addr, _mysql_port, &info);
   sm.init_replay();
 
   if (record_for_replay_file && sm.init_replay_file(record_for_replay_file))
@@ -291,7 +291,7 @@ void init_file_size(const char* fname)
 
 void process_replay_file(const char* fname)
 {
-  Mysql_stream_manager sm(mysql_ip.s_addr, mysql_port, &info);
+  Mysql_stream_manager sm(mysql_ip.s_addr, _mysql_port, &info);
 
   if (info.do_run)
     sm.init_replay();

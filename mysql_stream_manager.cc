@@ -251,10 +251,10 @@ bool Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u
     }
 
     bool in = (ntohl(ip_header->ip_dst.s_addr) == ntohl(mysql_ip) &&
-        ntohs(tcp_header->th_dport) == mysql_port);
+        ntohs(tcp_header->th_dport) == _mysql_port);
 
 
-    if (ntohs(tcp_header->th_sport) != mysql_port && ntohs(tcp_header->th_dport) != mysql_port)
+    if (ntohs(tcp_header->th_sport) != _mysql_port && ntohs(tcp_header->th_dport) != _mysql_port)
         return false;
 
     u_longlong key = in ? get_key(ip_header->ip_src.s_addr, tcp_header->th_sport) :
@@ -370,7 +370,7 @@ Mysql_stream* Mysql_stream_manager::find_or_make_stream(u_longlong key, Mysql_pa
       return NULL; // found end of stream on an inactive  stream
 
     s = new Mysql_stream(this, src_ip, src_port,
-                          mysql_ip, mysql_port);
+                          mysql_ip, _mysql_port);
     lookup[key] = s;
 
     if (info->do_run)

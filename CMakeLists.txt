@@ -1,43 +1,33 @@
-cmake_minimum_required(VERSION 3.14)
-project(mysqlpcap VERSION 1.0 LANGUAGES CXX)
+cmake_minimum_required(VERSION 2.8)
+set(MYSQLPCAP_VERSION "1.0.0")
+set(MYSQLPCAP_VERSION_MAJOR 1)
+set(MYSQLPCAP_VERSION_MINOR 0)
 
-# Set the C++ Standard for all targets
-set(CMAKE_CXX_STANDARD 11)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
-set(CMAKE_CXX_EXTENSIONS OFF)
+# Set the C++ Standard for all targets (Best effort for C++11 in CMake 2.8)
+# We rely on the CXXFLAGS environment variable or the compiler's default for C++11.
+# The following is a common idiom for older CMake versions:
+if(CMAKE_COMPILER_IS_GNU_CXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
+endif()
 
 # Add custom module path (as in the original)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
-# --- Find Dependencies ---
-# Find MySQL (assumes this works or you have a FindMySQL.cmake)
+    # Standard find package for systems where MySQL/MariaDB is installed normally
 find_package(MySQL REQUIRED)
+find_package(ZLIB REQUIRED)
+find_package(OpenSSL REQUIRED)
 
-# Find LibPcap using the older, more reliable method (Fix for previous error)
+# Find LibPcap using the older, more reliable method
 find_library(PCAP_LIBRARY NAMES pcap HINTS /usr/lib /usr/local/lib)
 find_path(PCAP_INCLUDE_DIR NAMES pcap.h HINTS /usr/include /usr/local/include)
 
-# Fail if libpcap is not found
-if(NOT PCAP_LIBRARY OR NOT PCAP_INCLUDE_DIR)
-    message(FATAL_ERROR "Could not find libpcap. Please install libpcap development package (e.g., libpcap-dev or libpcap-devel).")
-endif()
-
-# Find other modern packages
-find_package(Threads REQUIRED)
-
-# Find PCRE2 using PkgConfig (Fix for current error)
-# This assumes the libpcre2-8 development package is installed.
-
-# --- Legacy Find Method for PCRE2 ---
+# Find PCRE2 using Legacy Find Method
 # Find the PCRE2 library file
 find_library(PCRE2_LIBRARY NAMES pcre2-8 HINTS /usr/lib /usr/local/lib)
 # Find the PCRE2 include directory
 find_path(PCRE2_INCLUDE_DIR NAMES pcre2.h HINTS /usr/include /usr/local/include)
-
-# Fail if PCRE2 is not found
-if(NOT PCRE2_LIBRARY)
-    message(FATAL_ERROR "Could not find PCRE2 (libpcre2-8). Please install the development package or set PCRE2_LIBRARY/PCRE2_INCLUDE_DIR.")
-endif()
 
 # --- Main Executable ---
 add_executable(mysqlpcap
@@ -51,20 +41,20 @@ add_executable(mysqlpcap
 )
 
 # Set properties for the main executable
-target_include_directories(mysqlpcap
-    PRIVATE
-        ${MYSQL_INCLUDE_DIR}
-        ${PCAP_INCLUDE_DIR}
-        ${PCRE2_INCLUDE_DIRS} 
+include_directories(
+    ${MYSQL_INCLUDE_DIR}
+    ${PCAP_INCLUDE_DIR}
+    ${PCRE2_INCLUDE_DIR} 
 )
 
-# Link libraries
+# Link libraries using the older, global approach
 target_link_libraries(mysqlpcap
-    PRIVATE
-        ${PCAP_LIBRARY}
-        ${MYSQL_LIBRARIES}
-        Threads::Threads
-        ${PCRE2_LIBRARY} # Link PCRE2 libraries from PkgConfig
+    ${PCAP_LIBRARY}
+    ${MYSQL_LIBRARIES}
+    ${ZLIB_LIBRARIES} # Dependencies for static libmysqlclient
+    ${OPENSSL_LIBRARIES} # Dependencies for static libmysqlclient    ${CMAKE_THREAD_LIBS_INIT} # Use older variable for threads
+    ${PCRE2_LIBRARY}
+    -ldl -lpthread
 )
 
 # --- Test Executables ---
@@ -83,6 +73,12 @@ target_compile_definitions(test_table_stats
 
 # Link test executables
 target_link_libraries(test_query_pattern
-    PRIVATE
-        ${PCRE2_LIBRARY} # Link PCRE2 for the test target
+    ${PCRE2_LIBRARY}
+)
+target_link_libraries(test_table_stats
+    ${PCRE2_LIBRARY}
+)
+
+install(TARGETS mysqlpcap
+    DESTINATION bin
 )

@@ -109,7 +109,7 @@ class Mysql_stream_manager
 {
 public:
     u_int mysql_ip;
-    u_int mysql_port;
+    u_int _mysql_port;
     std::map<u_longlong, Mysql_stream*> lookup;
     std::multiset<Mysql_query_packet*, Mysql_query_packet_time_cmp> slow_queries;
     param_info* info;
@@ -125,7 +125,7 @@ public:
     FILE* csv_fp;
     FILE* table_stats_fp;
 
-    Mysql_stream_manager(u_int mysql_ip, u_int mysql_port, param_info* info) : mysql_ip(mysql_ip), mysql_port(mysql_port),
+    Mysql_stream_manager(u_int mysql_ip, u_int _mysql_port, param_info* info) : mysql_ip(mysql_ip), _mysql_port(_mysql_port),
         info(info), explain_con(NULL), first_packet_ts_inited(false),
         replay_fd(-1),in_replay_write(false),csv_fp(NULL),table_stats_fp(NULL) { init();}
     ~Mysql_stream_manager() { cleanup();}
