@@ -18,7 +18,20 @@ endif()
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
     # Standard find package for systems where MySQL/MariaDB is installed normally
-find_package(MySQL REQUIRED)
+if (NOT JUST_EXPAND_IN)
+    # Perform the necessary dependency search for the MySQL development headers
+    # and libraries, making it a REQUIRED dependency for a normal build.
+    find_package(MySQL REQUIRED)
+
+    if (MySQL_FOUND)
+        message(STATUS "Found MySQL dependency. Including headers and libraries.")
+        include_directories(${MYSQL_INCLUDE_DIR})
+    endif()
+else()
+    # Confirmation message that the check was skipped.
+    message(STATUS "Skipping 'find_package(MySQL)' check as JUST_EXPAND_IN is set.")
+endif()
+
 find_package(ZLIB REQUIRED)
 find_package(OpenSSL REQUIRED)
 

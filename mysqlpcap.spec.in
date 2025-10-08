@@ -2,7 +2,7 @@
 # RPM Spec File for mysqlpcap
 # Targets: RHEL 7 (CentOS 7) and RHEL 8 (CentOS 8 / AlmaLinux / Rocky Linux)
 # ----------------------------------------------------------------------
-
+%define debug_package %{nil}
 %define mariadb_version 10.4.20
 Source0:        %{name}-%{version}.tar.gz
 Source1:        mariadb-%{mariadb_version}.tar.gz

@@ -13,7 +13,7 @@
 # 5. Build dependencies (cmake, gcc-c++, mysql-devel, etc.) are installed
 #    on the system where this script is run.
 #
-# Usage: ./build_rpm.sh
+# Usage: ./build-rpm.sh
 #
 
 # --- Configuration ---
@@ -71,11 +71,15 @@ create_source_tarball() {
     # 2. Copy necessary files into the staging area
     # Include all files needed to build the project
     echo "Copying source files to staging area..."
-    cp -r CMakeLists.txt *.cc *.h COPYING "/tmp/${LOCAL_SOURCE_DIR}/" 2>/dev/null
+    set -e
+    rm -f CMakeCache.txt
+    cmake -Wno-dev -DJUST_EXPAND_IN=1 .
+    cp -r CMakeLists.txt *.cc *.h *.in COPYING "/tmp/${LOCAL_SOURCE_DIR}/" 2>/dev/null
     mkdir -p /tmp/${LOCAL_SOURCE_DIR}/cmake
     cp cmake/*.* /tmp/${LOCAL_SOURCE_DIR}/cmake
     # 3. Create the gzipped tarball
     tar -czf "${SOURCES_DIR}/${SOURCE_ARCHIVE_NAME}" -C /tmp "${LOCAL_SOURCE_DIR}"
+    set +e
 
     if [ $? -ne 0 ]; then
         echo "Error: Failed to create source tarball."
@@ -104,9 +108,17 @@ build_rpm() {
     echo "--- Building RPM Package ---"
     # Use the --define to specify the topdir, so rpmbuild doesn't rely solely on ~/.rpmmacros
     # Use -ba to build both binary and source RPMs (optional: use -bb for binary only)
-    ver=$(grep mariadb_version mysqlpcap.spec| head -1| awk '{print $3}')
-    curl -L -o /root/rpmbuild/SOURCES/mariadb-${ver}.tar.gz \
-    https://archive.mariadb.org/mariadb-${ver}/source/mariadb-${ver}.tar.gz || die "MariaDB download failed"
+    ver=$(grep mariadb_version mysqlpcap.spec.in| head -1| awk '{print $3}')
+    mariadb_tar=mariadb-${ver}.tar.gz
+    dst_mariadb_tar=/root/rpmbuild/SOURCES/${mariadb_tar}
+    if [ -f "${mariadb_tar}" ]
+    then
+        cp $mariadb_tar $dst_mariadb_tar
+    else
+        curl -L -o  \
+            https://archive.mariadb.org/mariadb-${ver}/source/mariadb-${ver}.tar.gz || die "MariaDB download failed"
+    fi
+    cd $SPECS_DIR
     rpmbuild -bb \
         --define "_topdir ${BUILD_ROOT}" \
         "${SPECS_DIR}/mysqlpcap.spec"
@@ -116,11 +128,11 @@ build_rpm() {
         echo "======================================================="
         echo "  SUCCESS: RPM build complete!"
         echo "======================================================="
-        echo "Binary RPM location:"
-        find "${RPMS_DIR}" -name "*.rpm"
+        echo "Copying Binary RPM :"
+        find "${RPMS_DIR}" -name "*.rpm" -print -exec cp {} $src_root \;
         echo ""
-        echo "Source RPM location:"
-        find "${BUILD_ROOT}/SRPMS" -name "*.rpm"
+        echo "Copying Source RPM:"
+        find "${BUILD_ROOT}/SRPMS" -name "*.rpm" -print -exec cp {} $src_root \;
         echo ""
     else
         echo ""
@@ -130,6 +142,8 @@ build_rpm() {
         exit 1
     fi
 }
+
+src_root=$(realpath .)
 
 # --- Main Execution ---
 check_prerequisites
