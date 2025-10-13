@@ -19,6 +19,7 @@
 #include "common.h"
 #include "version.h"
 #include "mysql_stream_manager.h"
+#include "pcap_detect.h"
 
 enum {
   REPLAY_HOST=230,
@@ -109,7 +110,7 @@ void print_version()
 void print_usage(const char* prog_name)
 {
     std::cerr << "Usage: " << prog_name << " [options]\n\n";
-    std::cerr << "Options for MySQL Packet Capture and Analysis:\n\n";
+    std::cerr << "Options for mysqlpcap - MySQL Packet Capture and Analysis Tool:\n\n";
 
     // Descriptions corresponding to the long_options array (in order).
     // Note: The descriptions array MUST be kept synchronized with long_options.
@@ -144,6 +145,7 @@ void print_usage(const char* prog_name)
     };
 
     int desc_index = 0;
+    const int max_short_opt_val = 128;
     int max_option_width = 0; // To calculate optimal padding
 
     // 1. First pass to determine maximum option string width
@@ -152,7 +154,7 @@ void print_usage(const char* prog_name)
         std::string option_str;
         
         // Add short option if it exists
-        if (opt.val > 0 && opt.val < 256) {
+        if (opt.val > 0 && opt.val < max_short_opt_val) {
             option_str += "-" + std::string(1, (char)opt.val) + ", ";
         } else {
             option_str += "    "; // Padding for options without a short form
@@ -189,7 +191,7 @@ void print_usage(const char* prog_name)
         
         // Construct the option string (Option + Argument Type)
         std::string option_str;
-        if (opt.val > 0 && opt.val < 256) {
+        if (opt.val > 0 && opt.val < max_short_opt_val) {
             option_str += "-" + std::string(1, (char)opt.val) + ", ";
         } else {
             option_str += "    ";
@@ -356,6 +358,14 @@ void process_pcap_file(const char* fname)
 
     if (!packet)
       break;
+
+    if (!info.ethernet_header_size)
+    {
+        info.ethernet_header_size = detect_eth_header_size(&header, packet);
+
+        if (!info.ethernet_header_size)
+            die("Could not detect ethernet header size, set manually with -e option");
+    }
 
     if (info.report_progress)
     {

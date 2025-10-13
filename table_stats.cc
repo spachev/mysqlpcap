@@ -31,6 +31,20 @@ static std::vector<std::string> tokenize_query(const std::string& query)
     return tokens;
 }
 
+void Table_query_entry::print(FILE* fp)
+{
+    fprintf(fp, ",%lu,%.5f,%.5f,%.5f", n, min_time, max_time, total_time / n);
+}
+
+void Table_query_info::print(FILE* fp)
+{
+    for (auto it = entries.begin(); it != entries.end(); it++)
+    {
+        fprintf(fp, ",%s", it->first.c_str());
+        it->second.print(fp);
+    }
+}
+
 void Table_stats::print(FILE* fp)
 {
     if (!fp)
@@ -41,18 +55,12 @@ void Table_stats::print(FILE* fp)
     std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
 
     // Print the timestamp at the beginning of the line.
-    fprintf(fp, "%s ", timestamp);
-    auto it = stats.begin();
+    fprintf(fp, "%s", timestamp);
 
-    if (it != stats.end())
+    for (auto it = stats.begin(); it != stats.end(); ++it)
     {
-        fprintf(fp, "%s,%zu", it->first.c_str(), it->second);
-        ++it;
-    }
-
-    for (; it != stats.end(); ++it)
-    {
-        fprintf(fp, ",%s,%zu", it->first.c_str(), it->second);
+        fprintf(fp, ",%s", it->first.c_str());
+        it->second.print(fp);
     }
 
     fprintf(fp, "\n");
@@ -63,7 +71,34 @@ static bool table_char(char c)
     return isalnum(c) || c == '_' || c == '$';
 }
 
-void Table_stats::update_table(const char* table_token)
+void Table_query_entry::update(double exec_time)
+{
+    n++;
+
+    if (exec_time > max_time)
+        max_time = exec_time;
+    if (exec_time < min_time)
+        min_time = exec_time;
+
+    total_time += exec_time;
+}
+
+void Table_query_info::register_query(const char* type, double exec_time)
+{
+    auto it = entries.find(type);
+
+    if (it == entries.end())
+    {
+        Table_query_entry& e = entries[type] = Table_query_entry();
+        e.n = 1;
+        e.min_time = e.max_time = e.total_time = exec_time;
+        return;
+    }
+
+    it->second.update(exec_time);
+}
+
+void Table_stats::update_table(const char* table_token, const char* type, double exec_time)
 {
     std::string table_name;
     const char* p = table_token;
@@ -81,19 +116,21 @@ void Table_stats::update_table(const char* table_token)
     }
 
     auto it = stats.find(table_name);
+
     if (it == stats.end())
     {
-        stats[table_name] = 1;
+        Table_query_info& e = stats[table_name] = Table_query_info();
+        e.register_query(type, exec_time);
         return;
     }
 
-    it->second++;
+    it->second.register_query(type, exec_time);
 }
 
 
 // TODO: directly parse the query string without making a copy, which could be expensive for a long query
 
-void Table_stats::update_from_query(const char* query, size_t query_len)
+void Table_stats::update_from_query(const char* query, size_t query_len, double exec_time)
 {
     if (!query_len)
         query_len = strlen(query);
@@ -110,19 +147,19 @@ void Table_stats::update_from_query(const char* query, size_t query_len)
     // Logic to determine query type and extract tables
     if (first_token == "insert" && tokens.size() > 2 && tokens[1] == "into")
     {
-        update_table(tokens[2].c_str());
+        update_table(tokens[2].c_str(), first_token.c_str(), exec_time);
         return;
     }
     
     if (first_token == "update" && tokens.size() > 1)
     {
-        update_table(tokens[1].c_str());
+        update_table(tokens[1].c_str(), first_token.c_str(), exec_time);
         return;
     }
     
     if (first_token == "delete" && tokens.size() > 2 && tokens[1] == "from")
     {
-        update_table(tokens[2].c_str());
+        update_table(tokens[2].c_str(), first_token.c_str(), exec_time);
         return;
     }
 
@@ -145,7 +182,7 @@ void Table_stats::update_from_query(const char* query, size_t query_len)
                         break;
                     }
                     
-                    update_table(table_name.c_str());
+                    update_table(table_name.c_str(), first_token.c_str(), exec_time);
                     j++;
                     
                     if (j < tokens.size() && tokens[j] == "as")

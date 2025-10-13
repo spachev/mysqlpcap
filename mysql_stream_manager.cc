@@ -467,7 +467,7 @@ void Mysql_stream_manager::register_query(Mysql_stream* s, Mysql_query_packet* q
         q_stats.record_query(lookup_key, query->exec_time);
 
         if (table_stats_fp)
-            table_stats.update_from_query(query->query(), query->query_len());
+            table_stats.update_from_query(query->query(), query->query_len(), query->exec_time);
     }
 }
 

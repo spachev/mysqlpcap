@@ -54,6 +54,7 @@ add_executable(mysqlpcap
     query_pattern.cc
     ip_stream.cc
     table_stats.cc
+    pcap_detect.cc
 )
 
 # Set properties for the main executable
@@ -76,21 +77,29 @@ target_link_libraries(mysqlpcap
 # --- Test Executables ---
 add_executable(test_query_pattern query_pattern.cc)
 add_executable(test_table_stats table_stats.cc)
+add_executable(test_pcap_detect pcap_detect.cc)
 
 # Set preprocessor definitions
 target_compile_definitions(test_query_pattern
     PRIVATE
         TEST_QUERY_PATTERN
 )
+
 target_compile_definitions(test_table_stats
     PRIVATE
         TEST_TABLE_STATS
+)
+
+target_compile_definitions(test_pcap_detect
+    PRIVATE
+        TEST_PCAP_DETECT
 )
 
 # Link test executables
 target_link_libraries(test_query_pattern
     ${PCRE2_LIBRARY}
 )
+
 target_link_libraries(test_table_stats
     ${PCRE2_LIBRARY}
 )
