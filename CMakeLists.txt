@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 2.8)
 project(mysqlpcap)
-set(MYSQLPCAP_VERSION "1.0.1")
+set(MYSQLPCAP_VERSION "1.0.2")
 set(MYSQLPCAP_VERSION_MAJOR 1)
-set(MYSQLPCAP_VERSION_MINOR 1)
+set(MYSQLPCAP_VERSION_MINOR 2)
 configure_file(version.h.in version.h @ONLY)
 configure_file(mysqlpcap.spec.in mysqlpcap.spec @ONLY)
 
