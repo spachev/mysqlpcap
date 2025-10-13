@@ -118,13 +118,13 @@ make install DESTDIR=%{buildroot}
 # Changelog Section
 # ----------------------------------------------------------------------
 %changelog
-* Mon Sep 29 2025 Sasha Pachev <spachev@gmail.com> - 1.0.0-1
-- Initial RPM release for RHEL 7 and RHEL 8.
-- Built with CMake and linked against pcap, pcre2, and mysql libraries.
-- Modified to download and build MariaDB from source and statically link libmysqlclient.a.
 * Mon Oct 13 2025 Sasha Pachev <spachev@gmail.com> - 1.0.2
 - Added --help and --version
 - Added more detailed output in --table-stats
 - Added automatic Ethernet header size detection
+* Mon Sep 29 2025 Sasha Pachev <spachev@gmail.com> - 1.0.0-1
+- Initial RPM release for RHEL 7 and RHEL 8.
+- Built with CMake and linked against pcap, pcre2, and mysql libraries.
+- Modified to download and build MariaDB from source and statically link libmysqlclient.a.
 
 
