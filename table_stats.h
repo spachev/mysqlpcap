@@ -25,7 +25,7 @@ struct Table_query_info
 {
     std::map<std::string, Table_query_entry> entries;
     void register_query(const char* type, double exec_time);
-    void print(FILE* fp);
+    void print(FILE* fp, const char* table_name);
 };
 
 struct Table_stats

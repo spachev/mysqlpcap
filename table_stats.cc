@@ -36,11 +36,11 @@ void Table_query_entry::print(FILE* fp)
     fprintf(fp, ",%lu,%.5f,%.5f,%.5f", n, min_time, max_time, total_time / n);
 }
 
-void Table_query_info::print(FILE* fp)
+void Table_query_info::print(FILE* fp, const char* table_name)
 {
     for (auto it = entries.begin(); it != entries.end(); it++)
     {
-        fprintf(fp, ",%s", it->first.c_str());
+        fprintf(fp, ",%s,%s", table_name, it->first.c_str());
         it->second.print(fp);
     }
 }
@@ -54,13 +54,11 @@ void Table_stats::print(FILE* fp)
     char timestamp[20];
     std::strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
 
-    // Print the timestamp at the beginning of the line.
     fprintf(fp, "%s", timestamp);
 
     for (auto it = stats.begin(); it != stats.end(); ++it)
     {
-        fprintf(fp, ",%s", it->first.c_str());
-        it->second.print(fp);
+        it->second.print(fp, it->first.c_str());
     }
 
     fprintf(fp, "\n");

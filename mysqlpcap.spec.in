@@ -108,16 +108,22 @@ make
 %install
 # Install the built files into the DESTDIR
 make install DESTDIR=%{buildroot}
+mkdir -p  %{buildroot}%{_datadir}/mysqlpcap
+install -m 644 scripts/* %{buildroot}%{_datadir}/mysqlpcap/
 
 # ----------------------------------------------------------------------
 # Files Section: Lists all files to be included in the final RPM
 # ----------------------------------------------------------------------
 %files
 %{_bindir}/mysqlpcap
+%{_datadir}/mysqlpcap/*
 # ----------------------------------------------------------------------
 # Changelog Section
 # ----------------------------------------------------------------------
 %changelog
+* Thu Oct 16 2025 Sasha Pachev <spachev@gmail.com> - 1.0.3
+- Fixed the table stats format to be easier to parse
+- Added scripts/gen_table_heat_map.py to generate a dynamic HTML viewer for the table stats
 * Mon Oct 13 2025 Sasha Pachev <spachev@gmail.com> - 1.0.2
 - Added --help and --version
 - Added more detailed output in --table-stats

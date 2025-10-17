@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aggregated Performance Data Report</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        .card { box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1); }
+        .sortable-header { cursor: pointer; user-select: none; }
+        .table-row-data.hidden { display: none; }
+        /* FIX: Hide the first <td> cell in every row, which contains the unwanted Timestamp output */
+        #data-table-body tr td:first-child { display: none; }
+    </style>
+</head>
+<body class="p-4 sm:p-8">
+    <div class="max-w-7xl mx-auto">
+        <header class="mb-8">
+            <h1 class="text-3xl font-extrabold text-gray-900 mb-2">Detailed Database Performance Summary</h1>
+            <p class="text-gray-600">Analyze performance metrics by filtering by timestamp.</p>
+        </header>
+
+        <!-- Timestamp Filter Dropdown Section -->
+        <div class="bg-white p-6 rounded-xl card mb-8">
+            <label for="timestamp-select" class="block text-sm font-medium text-gray-700 mb-2">
+                Filter Entries by Timestamp:
+            </label>
+            <select id="timestamp-select"
+                    class="mt-1 block w-full pl-3 pr-10 py-3 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-lg border-2">
+                <!-- DROPDOWN_OPTIONS_PLACEHOLDER -->
+            </select>
+        </div>
+
+        <!-- Data Table Section -->
+        <div class="bg-white rounded-xl card overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200" id="performance-table">
+                    <thead class="bg-indigo-50">
+                        <tr>
+                            <!-- Index 0 (Table Name is now visually the first column) -->
+                            <th scope="col" class="px-3 py-3 text-left text-xs font-bold text-indigo-700 uppercase tracking-wider">
+                                Table Name
+                            </th>
+                            <!-- Index 1 -->
+                            <th scope="col" class="px-3 py-3 text-left text-xs font-bold text-indigo-700 uppercase tracking-wider">
+                                Query Type
+                            </th>
+
+                            <!-- data-column-index remains 3, 4, 5, 6, 7 to target the correct <td> elements in the 8-column Python output -->
+                            <th scope="col" class="px-3 py-3 text-left text-xs font-bold text-indigo-700 uppercase tracking-wider sortable-header"
+                                data-column-index="3" data-sort-type="numeric">
+                                Queries (#) <span class="sort-icon"></span>
+                            </th>
+                            <th scope="col" class="px-3 py-3 text-left text-xs font-bold text-green-600 uppercase tracking-wider sortable-header"
+                                data-column-index="4" data-sort-type="numeric">
+                                Min Time (s) <span class="sort-icon"></span>
+                            </th>
+                            <th scope="col" class="px-3 py-3 text-left text-xs font-bold text-red-600 uppercase tracking-wider sortable-header"
+                                data-column-index="5" data-sort-type="numeric">
+                                Max Time (s) <span class="sort-icon"></span>
+                            </th>
+                            <th scope="col" class="px-3 py-3 text-left text-xs font-bold text-yellow-600 uppercase tracking-wider sortable-header"
+                                data-column-index="6" data-sort-type="numeric">
+                                Avg Time (s) <span class="sort-icon"></span>
+                            </th>
+                            <th scope="col" class="px-3 py-3 text-left text-xs font-bold text-purple-700 uppercase tracking-wider sortable-header"
+                                data-column-index="7" data-sort-type="numeric">
+                                Total Execution Time (s) <span class="sort-icon"></span>
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody id="data-table-body" class="bg-white divide-y divide-gray-200">
+                        <!-- DATA_TABLE_ROWS_PLACEHOLDER -->
+                        <!-- Python script is assumed to be inserting 8 <td> cells per row, starting with the Timestamp (Index 0). -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <footer class="mt-8 text-center text-sm text-gray-500">
+            Report generated by cli_parser.py.
+        </footer>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const table = document.getElementById('performance-table');
+            const tableBody = document.getElementById('data-table-body');
+            const headers = document.querySelectorAll('.sortable-header');
+            const timestampSelect = document.getElementById('timestamp-select');
+
+            // State for the current sort: [columnIndex, direction (1=asc, -1=desc)]
+            let currentSort = [-1, 1];
+
+            /**
+             * FILTERS the table rows based on the selected timestamp.
+             */
+            function filterTable() {
+                const selectedTimestamp = timestampSelect.value;
+                const rows = tableBody.querySelectorAll('tr');
+
+                rows.forEach(row => {
+                    const rowTimestamp = row.getAttribute('data-timestamp');
+                    // This is the core filtering logic, which uses the value from the dropdown
+                    // to match the data-timestamp attribute on the row.
+                    if (rowTimestamp === selectedTimestamp) {
+                        row.classList.remove('hidden');
+                    } else {
+                        row.classList.add('hidden');
+                    }
+                });
+
+                // Re-sort the visible data after filtering
+                if (currentSort[0] !== -1) {
+                    const headerIndex = currentSort[0] - 3; // Convert <td> index (3-7) back to header index (0-4)
+                    if (headerIndex >= 0 && headerIndex < headers.length) {
+                        sortTable(currentSort[0], headers[headerIndex].dataset.sortType, currentSort[1]);
+                    }
+                }
+            }
+
+            // Attach the filter function to the change event of the dropdown
+            timestampSelect.addEventListener('change', filterTable);
+
+            /**
+             * SORTS the table rows based on the column index and data type.
+             * @param {number} columnIndex - The zero-based index of the column to sort (must match <td> index).
+             * @param {string} dataType - The expected data type ('numeric' or 'string').
+             * @param {number} [forcedDirection=0] - Optional parameter to force the sort direction (1 or -1).
+             */
+            function sortTable(columnIndex, dataType, forcedDirection = 0) {
+                // Only sort currently visible rows for performance and UX clarity
+                const rows = Array.from(tableBody.querySelectorAll('tr:not(.hidden)'));
+                let direction = 1; // Default to ascending
+
+                if (forcedDirection !== 0) {
+                    direction = forcedDirection;
+                }
+                // Check if the same column was clicked again to toggle direction
+                else if (currentSort[0] === columnIndex) {
+                    direction = -currentSort[1];
+                }
+
+                rows.sort((rowA, rowB) => {
+                    // Get the content of the cell in the specified column
+                    // columnIndex is the TRUE index (0 to 7) of the <td> element.
+                    const cellA = rowA.cells[columnIndex].textContent.trim();
+                    const cellB = rowB.cells[columnIndex].textContent.trim();
+
+                    let comparison = 0;
+
+                    if (dataType === 'numeric') {
+                        // Numeric comparison
+                        const valA = parseFloat(cellA) || 0;
+                        const valB = parseFloat(cellB) || 0;
+                        comparison = valA - valB;
+                    } else {
+                        // String comparison
+                        comparison = cellA.localeCompare(cellB);
+                    }
+
+                    return comparison * direction;
+                });
+
+                // Get all rows (including hidden ones) to maintain context
+                const allRows = Array.from(tableBody.querySelectorAll('tr'));
+                const hiddenRows = allRows.filter(row => row.classList.contains('hidden'));
+
+                // Clear the table body
+                tableBody.innerHTML = '';
+
+                // Append the sorted visible rows
+                rows.forEach(row => tableBody.appendChild(row));
+
+                // Re-append the hidden rows
+                hiddenRows.forEach(row => tableBody.appendChild(row));
+
+
+                // Update the sort state
+                currentSort = [columnIndex, direction];
+                updateSortIcons(columnIndex, direction);
+            }
+
+            /**
+             * Updates the visual indicator (arrow) on the sorted header.
+             */
+            function updateSortIcons(columnIndex, direction) {
+                headers.forEach(header => {
+                    const iconSpan = header.querySelector('.sort-icon');
+                    iconSpan.textContent = ''; // Clear existing icon
+
+                    // The header's data-column-index must match the current sorted columnIndex
+                    if (parseInt(header.dataset.columnIndex) === columnIndex) {
+                        iconSpan.textContent = direction === 1 ? ' ▲' : ' ▼'; // Up/Down arrow
+                    }
+                });
+            }
+
+            // Attach click listeners to sortable headers
+            headers.forEach(header => {
+                header.addEventListener('click', () => {
+                    const columnIndex = parseInt(header.dataset.columnIndex);
+                    const dataType = header.dataset.sortType;
+                    sortTable(columnIndex, dataType);
+                });
+            });
+
+            // Initial Filter (Uses the default selected timestamp)
+            filterTable();
+
+            // Initial Sort: Sort by Total Execution Time (index 7) descending (large times first)
+            // Call sortTable again after filterTable to ensure the initial sort applies to the now-visible data.
+            const initialColumnIndex = 7;
+            const initialDirection = -1; // Descending
+            sortTable(initialColumnIndex, 'numeric', initialDirection);
+            currentSort = [initialColumnIndex, initialDirection];
+            updateSortIcons(initialColumnIndex, initialDirection);
+        });
+    </script>
+</body>
+</html>

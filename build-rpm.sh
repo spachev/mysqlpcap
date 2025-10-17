@@ -74,7 +74,7 @@ create_source_tarball() {
     set -e
     rm -f CMakeCache.txt
     cmake -Wno-dev -DJUST_EXPAND_IN=1 .
-    cp -r CMakeLists.txt *.cc *.h *.in COPYING "/tmp/${LOCAL_SOURCE_DIR}/" 2>/dev/null
+    cp -r CMakeLists.txt *.cc *.h *.in COPYING scripts "/tmp/${LOCAL_SOURCE_DIR}/" 2>/dev/null
     mkdir -p /tmp/${LOCAL_SOURCE_DIR}/cmake
     cp cmake/*.* /tmp/${LOCAL_SOURCE_DIR}/cmake
     # 3. Create the gzipped tarball
