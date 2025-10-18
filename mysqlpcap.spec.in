@@ -121,6 +121,8 @@ install -m 644 scripts/* %{buildroot}%{_datadir}/mysqlpcap/
 # Changelog Section
 # ----------------------------------------------------------------------
 %changelog
+* Fri Oct 16 2025 Sasha Pachev <spachev@gmail.com> - 1.0.4
+- Added filtering by query type to the table stats viewer
 * Thu Oct 16 2025 Sasha Pachev <spachev@gmail.com> - 1.0.3
 - Fixed the table stats format to be easier to parse
 - Added scripts/gen_table_heat_map.py to generate a dynamic HTML viewer for the table stats

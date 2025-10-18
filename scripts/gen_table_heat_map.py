@@ -66,6 +66,7 @@ def generate_html_content(template_content, parsed_data):
     dropdown (using table names) and the data table (with 6 new fields).
     """
     dropdown_options = ""
+    query_type_options = ""
     data_table_rows = ""
 
     # 1. Build the dropdown options (using unique table names for selection)
@@ -74,6 +75,11 @@ def generate_html_content(template_content, parsed_data):
     for ts in unique_ts:
         # The option value is the table name, used for filtering in JS
         dropdown_options += f'<option value="{ts}">{ts}</option>\n'
+
+    unique_query_types = sorted(list(set(item['query_type'] for item in parsed_data)))
+    for query_type in unique_query_types:
+        # The option value is the table name, used for filtering in JS
+        query_type_options += f'<option value="{query_type}">{query_type}</option>\n'
 
     # 2. Build the data table rows
     for item in parsed_data:
@@ -87,12 +93,14 @@ def generate_html_content(template_content, parsed_data):
             <td class="px-3 py-3 whitespace-nowrap text-sm text-green-600">{item['min_time']}</td>
             <td class="px-3 py-3 whitespace-nowrap text-sm text-red-600">{item['max_time']}</td>
             <td class="px-3 py-3 whitespace-nowrap text-sm text-yellow-600">{item['avg_time']}</td>
-            <td class="px-3 py-3 whitespace-nowrap text-sm text-yellow-600">{item['total_time']}</td>
+            <td class="px-3 py-3 whitespace-nowrap text-sm text-purple-600">{item['total_time']}</td>
         </tr>
         """
 
     # Inject content into the template
-    content = template_content.replace("<!-- DROPDOWN_OPTIONS_PLACEHOLDER -->", dropdown_options)
+    content = template_content.replace("<!-- QUERY_TYPE_OPTIONS_PLACEHOLDER -->",
+                                       query_type_options)
+    content = content.replace("<!-- DROPDOWN_OPTIONS_PLACEHOLDER -->", dropdown_options)
     content = content.replace("<!-- DATA_TABLE_ROWS_PLACEHOLDER -->", data_table_rows)
 
     return content
