@@ -6,6 +6,28 @@
 #include <cstring>
 #include <ctime>
 #include "table_stats.h"
+#include "sql_parser.hh"
+
+class Table_parser: public SQL_Parser
+{
+protected:
+    Table_stats* table_stats;
+    double exec_time;
+public:
+    Table_parser(Table_stats* table_stats, double exec_time):table_stats(table_stats),exec_time(exec_time)
+    {
+    }
+    
+    virtual ~Table_parser()
+    {
+    }
+    
+    void handle_table(const char* query_type, const char* table_name)
+    {
+        table_stats->update_table(table_name, query_type, exec_time);
+    }
+    
+};
 
 // Function to normalize and split the query into tokens
 static std::vector<std::string> tokenize_query(const std::string& query)
@@ -126,13 +148,13 @@ void Table_stats::update_table(const char* table_token, const char* type, double
 }
 
 
-// TODO: directly parse the query string without making a copy, which could be expensive for a long query
-
 void Table_stats::update_from_query(const char* query, size_t query_len, double exec_time)
 {
     if (!query_len)
         query_len = strlen(query);
 
+#ifdef USE_SIMPLE_PARSER
+    
     std::vector<std::string> tokens = tokenize_query(std::string(query, query_len));
 
     if (tokens.empty())
@@ -196,6 +218,13 @@ void Table_stats::update_from_query(const char* query, size_t query_len, double 
             }
         }
     }
+#else
+    Table_parser p(this, exec_time);
+    if (yyparse_string(&p, query, query_len))
+        fprintf(stderr, "Error parsing: %.*s\n", (int)query_len, query);
+    else
+        fprintf(stderr, "Success parsing: %.*s\n", (int)query_len, query);
+#endif
 }
 
 #ifdef TEST_TABLE_STATS
@@ -204,6 +233,7 @@ void Table_stats::update_from_query(const char* query, size_t query_len, double 
 int main() {
     Table_stats s;
     s.update_from_query("SELECT u.name FROM users AS u, posts p WHERE u.id = p.user_id;");
+    s.update_from_query("SELECT u.name FROM users u0, posts p0 WHERE u.id = p.user_id;");
     s.update_from_query("INSERT INTO new_users (name) VALUES ('John');");
     s.update_from_query("UPDATE products SET price = 15.00 WHERE id = 10;");
     s.update_from_query("DELETE FROM old_logs WHERE date < '2023-01-01';");

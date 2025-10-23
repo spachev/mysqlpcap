@@ -34,6 +34,7 @@ endif()
 
 find_package(ZLIB REQUIRED)
 find_package(OpenSSL REQUIRED)
+find_package(BISON REQUIRED)
 
 # Find LibPcap using the older, more reliable method
 find_library(PCAP_LIBRARY NAMES pcap HINTS /usr/lib /usr/local/lib)
@@ -45,6 +46,13 @@ find_library(PCRE2_LIBRARY NAMES pcre2-8 HINTS /usr/lib /usr/local/lib)
 # Find the PCRE2 include directory
 find_path(PCRE2_INCLUDE_DIR NAMES pcre2.h HINTS /usr/include /usr/local/include)
 
+BISON_TARGET(SQL_PARSER
+    ${CMAKE_CURRENT_SOURCE_DIR}/sql_parser.yy
+    ${CMAKE_CURRENT_BINARY_DIR}/sql_parser.cc
+    # Customizes Bison command flags for C++ reentrant parser
+    COMPILE_FLAGS   "-d -p yy"
+)
+
 # --- Main Executable ---
 add_executable(mysqlpcap
     mysqlpcap.cc
@@ -55,10 +63,15 @@ add_executable(mysqlpcap
     ip_stream.cc
     table_stats.cc
     pcap_detect.cc
+    ${BISON_SQL_PARSER_OUTPUT_SOURCE}
+    ${BISON_SQL_PARSER_OUTPUT_HEADER}
 )
+add_dependencies(mysqlpcap SQL_PARSER)
+
 
 # Set properties for the main executable
 include_directories(
+    ${CMAKE_CURRENT_BINARY_DIR}
     ${MYSQL_INCLUDE_DIR}
     ${PCAP_INCLUDE_DIR}
     ${PCRE2_INCLUDE_DIR} 
@@ -76,7 +89,8 @@ target_link_libraries(mysqlpcap
 
 # --- Test Executables ---
 add_executable(test_query_pattern query_pattern.cc)
-add_executable(test_table_stats table_stats.cc)
+add_executable(test_table_stats table_stats.cc     ${BISON_SQL_PARSER_OUTPUT_SOURCE} ${BISON_SQL_PARSER_OUTPUT_HEADER})
+add_dependencies(test_table_stats SQL_PARSER)
 add_executable(test_pcap_detect pcap_detect.cc)
 
 # Set preprocessor definitions
