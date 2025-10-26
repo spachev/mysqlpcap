@@ -232,16 +232,42 @@ void Table_stats::update_from_query(const char* query, size_t query_len, double 
 
 int main() {
     Table_stats s;
-    s.update_from_query("SELECT u.name FROM users AS u, posts p WHERE u.id = p.user_id;");
-    s.update_from_query("SELECT u.name FROM users u0, posts p0 WHERE u.id = p.user_id;");
-    s.update_from_query("INSERT INTO new_users (name) VALUES ('John');");
-    s.update_from_query("UPDATE products SET price = 15.00 WHERE id = 10;");
-    s.update_from_query("DELETE FROM old_logs WHERE date < '2023-01-01';");
-    s.update_from_query("SELECT * FROM employees;");
-    s.update_from_query("SELECT count(*) FROM employees;");
-    s.update_from_query("SELECT * FROM table1 JOIN table2 ON table1.id = table2.id;");
-    s.update_from_query("SELECT * FROM (table1) JOIN table2 ON table1.id = table2.id;");
-    s.update_from_query("SELECT * FROM `table1` JOIN table2 ON table1.id = table2.id;");
+    const char* queries[] = {
+            "SELECT u.name FROM users AS u, posts p WHERE u.id = p.user_id;",
+            "SELECT u.name FROM users u0, posts p0 WHERE u.id = p.user_id;",
+            "INSERT INTO new_users (name) VALUES ('John');",
+            "UPDATE products SET price = 15.00 WHERE id = 10;",
+            "DELETE FROM old_logs WHERE date < '2023-01-01';",
+            "SELECT * FROM employees;",
+            "SELECT count(*) FROM employees;",
+            "SELECT * FROM table1 JOIN table2 ON table1.id = table2.id;",
+            "SELECT * FROM (table1) JOIN table2 ON table1.id = table2.id;",
+            "SELECT * FROM `table1` JOIN table2 ON table1.id = table2.id;",
+            "SELECT * FROM table_self_join t1 JOIN table_self_join t2 USING (id);",
+            "SELECT t.c1 FROM (SELECT id AS c1 FROM users) AS t WHERE t.c1 = 1;",
+            "SELECT name FROM users WHERE id = (SELECT max(id) FROM users);",
+            "SELECT id, name FROM users WHERE NOT id = 10 ORDER BY name DESC, id LIMIT 5;",
+            "SELECT dept, count(*) AS num FROM employees GROUP BY dept;",
+            "SELECT product_id FROM sales WHERE quantity != 0;",
+            "SELECT * FROM items WHERE price <> 100.00;",
+            "SELECT name FROM users WHERE id = (SELECT max(id) FROM users) GROUP BY name ORDER BY name;",
+            "SELECT * FROM large_table LIMIT 100;",
+            "SELECT * FROM orders WHERE (amount > 100 AND status = 'pending') OR status = 'shipped';",
+            "SELECT * FROM users WHERE age <= 25 AND NOT (city = 'NY' OR city = 'LA');",
+            "select c from t1 where n='1'",
+            "SELECT @@max_allowed_packet,@@system_time_zone,@@time_zone,@@auto_increment_increment",
+            "select 1",
+            "select 1 from dual",
+            "select c from dual",
+            "select c from t1",
+            "select c from t1 where n=1",
+        };
+
+        const size_t num_queries = sizeof(queries) / sizeof(queries[0]);
+
+        for (size_t i = 0; i < num_queries; ++i) {
+            s.update_from_query(queries[i]);
+        }
     s.print(stdout);
     return 0;
 }
