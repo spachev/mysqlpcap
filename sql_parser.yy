@@ -6,58 +6,82 @@
 #include <string>
 #include <cstring>
 #include <cctype>
-#include <cstdlib> // Required for std::realloc and std::free
+#include <cstdlib> // Required for std::realloc, std::free, std::malloc, std::calloc
 #include <sstream> 
 #include <algorithm> 
 #include <cstdarg> // Required for va_list for safe custom strcat
 #include <stdexcept> // For runtime_error
 
-// --- MEMORY POOL (ARENA ALLOCATOR) IMPLEMENTATION (NOW DYNAMIC) ---
-#define DEFAULT_POOL_SIZE 4096 // Initial 4KB size
+// --- MEMORY POOL (NON-MOVING MULTI-CHUNK ARENA ALLOCATOR) ---
+#define DEFAULT_POOL_SIZE 4096 // Size for each new chunk
 #define YY_BUF_SIZE 256 // Max size for lexer token buffer
 
-char* pool = nullptr; // Dynamically allocated memory block
-size_t pool_capacity = 0; // Current capacity of the pool
-size_t pool_used = 0;
+// New chunk definition: Memory is allocated in chunks, never moved or realloc'd
+typedef struct MemoryChunk {
+    char* data;
+    size_t capacity;
+    size_t used;
+    struct MemoryChunk* next;
+} MemoryChunk;
 
-// Function to allocate memory from the pool (NOW DYNAMIC)
-char* pool_alloc(size_t size) {
-    size_t new_pool_used = pool_used + size;
+// Global head and current chunk pointers
+MemoryChunk* pool_head = nullptr;
+MemoryChunk* pool_current_chunk = nullptr;
+
+// Function to allocate a new chunk
+MemoryChunk* allocate_new_chunk(size_t min_size) {
+    // Ensure the new chunk is at least DEFAULT_POOL_SIZE or large enough for the request
+    size_t capacity = DEFAULT_POOL_SIZE > min_size ? DEFAULT_POOL_SIZE : min_size;
     
-    // 1. Check if the current capacity is enough
-    if (new_pool_used > pool_capacity) {
-        size_t new_capacity = pool_capacity == 0 ? DEFAULT_POOL_SIZE : pool_capacity;
-        
-        // 2. Calculate the next capacity (exponential growth or minimum required)
-        while (new_pool_used > new_capacity) {
-            // Check for overflow before multiplying
-            if (new_capacity > (size_t)-1 / 2) { 
-                new_capacity = new_pool_used;
-                if (new_pool_used > new_capacity) { // If requested size itself overflowed
-                    std::cerr << "❌ ERROR: Requested size causes capacity overflow." << std::endl;
-                    return nullptr;
-                }
-                break;
-            }
-            new_capacity *= 2; 
-        }
+    MemoryChunk* new_chunk = (MemoryChunk*)std::malloc(sizeof(MemoryChunk));
+    if (!new_chunk) return nullptr;
 
-        // 3. Reallocate the memory block
-        // Use std::realloc for in-place growth if possible
-        char* new_pool = (char*)std::realloc(pool, new_capacity);
-        
-        if (new_pool == nullptr) {
-            std::cerr << "❌ ERROR: Memory reallocation failed (requested capacity: " << new_capacity << " bytes)." << std::endl;
-            return nullptr;
-        }
-        
-        pool = new_pool;
-        pool_capacity = new_capacity;
+    new_chunk->data = (char*)std::malloc(capacity);
+    if (!new_chunk->data) {
+        std::free(new_chunk);
+        return nullptr;
     }
 
-    // 4. Allocation is guaranteed to succeed now
-    char* ptr = pool + pool_used;
-    pool_used += size;
+    new_chunk->capacity = capacity;
+    new_chunk->used = 0;
+    new_chunk->next = nullptr;
+    return new_chunk;
+}
+
+// Function to allocate memory from the pool (FIXED: Never moves existing blocks)
+char* pool_alloc(size_t size) {
+    // 1. Check if the current chunk has space
+    if (pool_current_chunk && pool_current_chunk->used + size <= pool_current_chunk->capacity) {
+        char* ptr = pool_current_chunk->data + pool_current_chunk->used;
+        pool_current_chunk->used += size;
+        return ptr;
+    }
+
+    // 2. Allocate a new chunk (and link it)
+    MemoryChunk* new_chunk = allocate_new_chunk(size);
+    if (!new_chunk) {
+        std::cerr << "❌ ERROR: Multi-chunk Memory pool exhausted." << std::endl;
+        return nullptr;
+    }
+
+    // Link the new chunk
+    if (!pool_head) {
+        pool_head = new_chunk;
+    } else {
+        // Since we only ever allocate from the current_chunk, we can link directly
+        // Note: For simplicity, we assume we always track the *last* chunk (pool_current_chunk)
+        if (pool_current_chunk) {
+            pool_current_chunk->next = new_chunk;
+        } else {
+             // This case should ideally not happen if pool_head is set
+             pool_head = new_chunk; 
+        }
+    }
+    pool_current_chunk = new_chunk; // The new chunk is now the active chunk
+
+    // 3. Allocate from the new chunk (guaranteed to fit)
+    char* ptr = pool_current_chunk->data + pool_current_chunk->used;
+    pool_current_chunk->used += size;
     return ptr;
 }
 
@@ -73,35 +97,29 @@ char* pool_strdup(const char* s) {
     return ptr;
 }
 
-// --- SAFE CUSTOM STRING CONCATENATION (REPLACES pool_sprintf FOR GRAMMAR RULES) ---
-// This variadic function calculates the total length of 'count' strings, 
-// allocates the space, and concatenates them safely within the pool.
+// SIMPLIFIED STRING CONCATENATION (Now safe due to non-moving pool)
 char* pool_strcat_n(int count, ...) {
     va_list args;
     va_start(args, count);
-    // Step 1: Calculate total required length
     size_t total_len = 0;
-    va_list args_copy;
-    va_copy(args_copy, args);
+    
+    // First pass: calculate total length (Safe, as pool pointers are stable)
     for (int i = 0; i < count; ++i) {
-        const char* s = va_arg(args_copy, const char*);
+        const char* s = va_arg(args, const char*);
         if (s) {
             total_len += strlen(s);
         }
     }
-    va_end(args_copy);
+    va_end(args); // va_list must be cleaned up
 
-    size_t required_size = total_len + 1; // +1 for null terminator
-    
-    // Step 2: Allocate from pool (handles resizing)
-    char* buffer = pool_alloc(required_size);
-    if (!buffer) {
-        va_end(args);
-        return nullptr; // Pool exhausted (or reallocation failed)
-    }
+    // Allocate final space in the pool (will allocate a new chunk if necessary)
+    size_t required_size = total_len + 1;
+    char* final_ptr = pool_alloc(required_size);
+    if (!final_ptr) return nullptr;
 
-    // Step 3: Concatenate strings into the allocated buffer
-    char* current_pos = buffer;
+    // Second pass: Concatenate content
+    va_start(args, count); // Reset va_list pointer for the second pass
+    char* current_pos = final_ptr;
     for (int i = 0; i < count; ++i) {
         const char* s = va_arg(args, const char*);
         if (s) {
@@ -110,26 +128,31 @@ char* pool_strcat_n(int count, ...) {
             current_pos += len;
         }
     }
+    *current_pos = '\0';
     va_end(args);
 
-    *current_pos = '\0'; // Null-terminate the final string
-    return buffer;
+    return final_ptr;
 }
 
 
-// Function to reset the pool
-void reset_pool() {
-    pool_used = 0;
-}
-
-// Function to clean up all allocated memory
+// Function to reset and free all allocated chunks
 void cleanup_pool() {
-    if (pool) {
-        std::free(pool);
-        pool = nullptr;
+    MemoryChunk* current = pool_head;
+    while (current) {
+        MemoryChunk* next = current->next;
+        if (current->data) {
+            std::free(current->data);
+        }
+        std::free(current);
+        current = next;
     }
-    pool_capacity = 0;
-    pool_used = 0;
+    pool_head = nullptr;
+    pool_current_chunk = nullptr;
+}
+
+// Function to reset the pool (by cleaning up everything)
+void reset_pool() {
+    cleanup_pool();
 }
 // --- END MEMORY POOL IMPLEMENTATION ---
 
@@ -225,6 +248,9 @@ extern void cleanup_pool();
 // NEW TOKENS for NULL handling (RENAMED to SQL_NULL to avoid C++ conflict)
 %token IS SQL_NULL 
 %token ATAT // NEW: System Variable Prefix @@
+// NEW TOKENS for CASE and Functions
+%token CASE WHEN THEN ELSE END
+%token CONVERT CAST UCASE LOCATE CONCAT SUBSTRING IF
 
 // Simple Value Tokens
 %token <str> ID      
@@ -243,8 +269,8 @@ GE NE NE2 // Add NE2 for <>
 %type <str> column_expr optional_as_alias comma_separated_table_list optional_insert_columns column_id_list
 // NEW non-terminals for JOIN specification
 %type <str> join_specifier
-// NEW non-terminals for function arguments
-%type <str> func_arg
+// NEW non-terminals for complex expressions
+%type <str> func_arg func_arg_list expression case_stmt case_when_clauses case_when_clause optional_else
 // NEW non-terminals for SELECT extensions
 %type <str> optional_group_by optional_order_by optional_limit column_id_with_direction_list column_id_with_direction
 %type <str> optional_from_clause // NEW: To make FROM optional for variable/literal selects
@@ -254,8 +280,7 @@ GE NE NE2 // Add NE2 for <>
 %left OR
 %left AND
 %left EQ NE NE2 LT GT LE GE
-%left 
-COMMA
+%left COMMA
 %nonassoc LOW_PREC 
 
 %%
@@ -280,8 +305,7 @@ statement:
 |   update_stmt
 |   delete_stmt
 |   alter_stmt
-|
-show_stmt
+|   show_stmt
     { $$ = $1; }
 ;
 
@@ -289,12 +313,12 @@ show_stmt:
     SHOW show_content
     {
         const char *s = "SHOW ";
-$$ = pool_strcat_n(2, s, $2);
+        $$ = pool_strcat_n(2, s, $2);
         if ($$ == nullptr) YYABORT;
     }
 ;
 
-// FIX: Relaxed show_content_token to accept any keyword/ID
+// FIX: Relaxed show_content_token to accept any keyword/ID/Literal
 show_content_token:
     ID {$$ = $1;} 
 |   SELECT {$$ = pool_strdup("SELECT");}
@@ -331,6 +355,11 @@ show_content_token:
 |   SHOW {$$ = pool_strdup("SHOW");}
 |   IS {$$ = pool_strdup("IS");}
 |   SQL_NULL {$$ = pool_strdup("NULL");} // Use SQL_NULL token, output string "NULL"
+|   CASE {$$ = pool_strdup("CASE");}
+|   WHEN {$$ = pool_strdup("WHEN");}
+|   THEN {$$ = pool_strdup("THEN");}
+|   ELSE {$$ = pool_strdup("ELSE");}
+|   END {$$ = pool_strdup("END");}
 |   LITERAL {$$ = pool_strcat_n(3, "'", $1, "'");} // Keep quotes for literal to preserve type
 |   NUMBER {$$ = $1;}
 |   STAR {$$ = pool_strdup("*");}
@@ -353,9 +382,9 @@ select_stmt:
     SELECT column_list optional_from_clause optional_where optional_group_by optional_order_by optional_limit
     {
         const char *s = "SELECT ";
-// Use pool_strcat_n to safely concatenate strings
+        // Use pool_strcat_n to safely concatenate strings
         $$ = pool_strcat_n(7, s, $2, $3, $4, $5, $6, $7);
-if ($$ == nullptr) YYABORT;
+        if ($$ == nullptr) YYABORT;
     }
 ;
 
@@ -367,7 +396,7 @@ optional_from_clause:
 |   FROM table_list
     {
         const char *s = " FROM ";
-$$ = pool_strcat_n(2, s, $2); 
+        $$ = pool_strcat_n(2, s, $2); 
         if ($$ == nullptr) YYABORT;
     }
 ;
@@ -376,7 +405,7 @@ table_list:
     table_ref comma_separated_table_list join_list
     {
         $$ = pool_strcat_n(3, $1, $2, $3);
-if ($$ == nullptr) YYABORT;
+        if ($$ == nullptr) YYABORT;
     }
 ;
 
@@ -388,7 +417,7 @@ comma_separated_table_list:
 |   comma_separated_table_list COMMA table_ref
     {
         const char *s = ", ";
-$$ = pool_strcat_n(3, $1, s, $3); 
+        $$ = pool_strcat_n(3, $1, s, $3); 
         if ($$ == nullptr) YYABORT;
     }
 ;
@@ -397,21 +426,21 @@ table_ref:
     ID optional_as_alias 
     {
         parser->handle_table("SELECT", $1);
-$$ = pool_strcat_n(2, $1, $2);
+        $$ = pool_strcat_n(2, $1, $2);
         if ($$ == nullptr) YYABORT;
     }
 |
-LPAREN ID RPAREN optional_as_alias 
+    LPAREN ID RPAREN optional_as_alias 
     {
         parser->handle_table("SELECT", $2);
-const char *s1 = "(", *s2 = ")";
+        const char *s1 = "(", *s2 = ")";
         $$ = pool_strcat_n(4, s1, $2, s2, $4);
         if ($$ == nullptr) YYABORT;
-}
+    }
 |   LPAREN select_stmt RPAREN optional_as_alias 
     {
         const char *s1 = "(", *s2 = ")";
-$$ = pool_strcat_n(4, s1, $2, s2, $4);
+        $$ = pool_strcat_n(4, s1, $2, s2, $4);
         if ($$ == nullptr) YYABORT;
     }
 ;
@@ -423,14 +452,14 @@ optional_as_alias:
 |   AS ID 
     { 
         const char *s = " AS ";
-$$ = pool_strcat_n(2, s, $2);
+        $$ = pool_strcat_n(2, s, $2);
         if ($$ == nullptr) YYABORT;
     }
 |
-ID // Implicit alias
+    ID // Implicit alias
     { 
         const char *s = " ";
-$$ = pool_strcat_n(2, s, $1);
+        $$ = pool_strcat_n(2, s, $1);
         if ($$ == nullptr) YYABORT;
     }
 ;
@@ -442,7 +471,7 @@ join_list:
 |   join_list join_clause
     {
         const char *s = " ";
-$$ = pool_strcat_n(3, $1, s, $2); 
+        $$ = pool_strcat_n(3, $1, s, $2); 
         if ($$ == nullptr) YYABORT;
     }
 ;
@@ -464,7 +493,7 @@ join_clause:
     optional_join_type JOIN table_ref join_specifier 
     {
         const char *s1 = "JOIN ";
-const char *s2 = " ";
+        const char *s2 = " ";
         $$ = pool_strcat_n(4, $1, s1, $3, $4); 
         if ($$ == nullptr) YYABORT;
     }
@@ -474,14 +503,14 @@ join_specifier:
     ON condition
     {
         const char *s = "ON ";
-$$ = pool_strcat_n(2, s, $2);
+        $$ = pool_strcat_n(2, s, $2);
         if ($$ == nullptr) YYABORT;
     }
 |
-USING LPAREN column_id_list RPAREN 
+    USING LPAREN column_id_list RPAREN 
     {
         const char *s1 = "USING (", *s2 = ")";
-$$ = pool_strcat_n(3, s1, $3, s2);
+        $$ = pool_strcat_n(3, s1, $3, s2);
         if ($$ == nullptr) YYABORT;
     }
 ;
@@ -495,55 +524,173 @@ column_list:
     column_list COMMA column_expr
     {
         const char *s = ", ";
-$$ = pool_strcat_n(3, $1, s, $3); 
+        $$ = pool_strcat_n(3, $1, s, $3); 
         if ($$ == nullptr) YYABORT;
     }
 ;
-// NEW: Helper rule for function arguments (STAR, ID, or EMPTY)
-func_arg:
+
+// NEW: A comprehensive expression non-terminal that can handle CASE and nested functions
+expression:
+    value // Simple value (ID, LITERAL, NUMBER, Subquery)
+    { 
+        // Note: 'value' rule returns quoted strings for LITERAL
+        $$ = $1; 
+    }
+|   CAST LPAREN expression AS ID RPAREN // CAST(expression AS type)
+    {
+        const char *s1 = "CAST(", *s2 = " AS ", *s3 = ")";
+        $$ = pool_strcat_n(5, s1, $3, s2, $5, s3);
+        if ($$ == nullptr) YYABORT;
+    }
+|   CONVERT LPAREN expression COMMA expression RPAREN // CONVERT(expression, expression) - allows type to be ID/LITERAL/function
+    {
+        const char *s1 = "CONVERT(", *s2 = ", ", *s3 = ")";
+        $$ = pool_strcat_n(5, s1, $3, s2, $5, s3);
+        if ($$ == nullptr) YYABORT;
+    }
+|   UCASE LPAREN expression RPAREN // UCASE(expression)
+    {
+        const char *s1 = "UCASE(", *s2 = ")";
+        $$ = pool_strcat_n(3, s1, $3, s2);
+        if ($$ == nullptr) YYABORT;
+    }
+|   LOCATE LPAREN expression COMMA expression RPAREN // LOCATE(substring, string)
+    {
+        const char *s1 = "LOCATE(", *s2 = ", ", *s3 = ")";
+        $$ = pool_strcat_n(5, s1, $3, s2, $5, s3);
+        if ($$ == nullptr) YYABORT;
+    }
+|   CONCAT LPAREN func_arg_list RPAREN // CONCAT(arg1, arg2, ...)
+    {
+        const char *s1 = "CONCAT(", *s2 = ")";
+        $$ = pool_strcat_n(3, s1, $3, s2);
+        if ($$ == nullptr) YYABORT;
+    }
+|   SUBSTRING LPAREN expression COMMA expression RPAREN // SUBSTRING(string, start)
+    {
+        const char *s1 = "SUBSTRING(", *s2 = ", ", *s3 = ")";
+        $$ = pool_strcat_n(5, s1, $3, s2, $5, s3);
+        if ($$ == nullptr) YYABORT;
+    }
+|   SUBSTRING LPAREN expression COMMA expression COMMA expression RPAREN // SUBSTRING(string, start, length)
+    {
+        const char *s1 = "SUBSTRING(", *s2 = ", ", *s3 = ", ", *s4 = ")";
+        $$ = pool_strcat_n(7, s1, $3, s2, $5, s3, $7, s4);
+        if ($$ == nullptr) YYABORT;
+    }
+|   ID LPAREN func_arg_list RPAREN // Generic function call with argument list (e.g., IF(x,y,z), MAX(c1), CONNECTION_ID())
+    {
+        const char *s1 = "(", *s2 = ")";
+        $$ = pool_strcat_n(4, $1, s1, $3, s2);
+        if ($$ == nullptr) YYABORT;
+    }
+|   case_stmt // CASE statements
+    { $$ = $1; }
+|   LPAREN expression RPAREN // Parenthesized expression
+    {
+        const char *s1 = "(", *s2 = ")";
+        $$ = pool_strcat_n(3, s1, $2, s2);
+        if ($$ == nullptr) YYABORT;
+    }
+|   ATAT ID // System Variable (used as an expression)
+    {
+        const char *s = "@@";
+        $$ = pool_strcat_n(2, s, $2);
+        if ($$ == nullptr) YYABORT;
+    }
+|   expression EQ expression // Arithmetic and bitwise operators (simplified to generic comparison/operation)
+    {
+        const char *s = " = ";
+        $$ = pool_strcat_n(3, $1, s, $3);
+        if ($$ == nullptr) YYABORT;
+    }
+;
+
+// NEW: Minimal CASE statement structure 
+case_stmt:
+    CASE expression case_when_clauses optional_else END // CASE expression WHEN... (like CASE x WHEN 1...)
+    {
+        const char *s1 = "CASE ", *s2 = " ", *s3 = " END";
+        $$ = pool_strcat_n(5, s1, $2, $3, $4, s3);
+        if ($$ == nullptr) YYABORT;
+    }
+|   CASE case_when_clauses optional_else END // CASE WHEN condition THEN...
+    {
+        const char *s1 = "CASE ", *s2 = " END";
+        $$ = pool_strcat_n(4, s1, $2, $3, s2);
+        if ($$ == nullptr) YYABORT;
+    }
+;
+
+case_when_clauses:
+    case_when_clause
+|   case_when_clauses case_when_clause
+    {
+        const char *s = " ";
+        $$ = pool_strcat_n(3, $1, s, $2);
+        if ($$ == nullptr) YYABORT;
+    }
+;
+
+case_when_clause:
+    WHEN expression THEN expression // Covers WHEN value THEN result (for CASE expression)
+    {
+        const char *s1 = "WHEN ", *s2 = " THEN ";
+        $$ = pool_strcat_n(4, s1, $2, s2, $4);
+        if ($$ == nullptr) YYABORT;
+    }
+|   WHEN condition THEN expression // Covers WHEN condition THEN result (for CASE WHEN)
+    {
+        const char *s1 = "WHEN ", *s2 = " THEN ";
+        $$ = pool_strcat_n(4, s1, $2, s2, $4);
+        if ($$ == nullptr) YYABORT;
+    }
+;
+
+optional_else:
     /* empty */
-    { $$ = pool_strdup(""); } // Allows functions with no arguments (e.g., connection_id())
-|   STAR
+    { $$ = pool_strdup(""); }
+|   ELSE expression
+    {
+        const char *s = " ELSE ";
+        $$ = pool_strcat_n(2, s, $2);
+        if ($$ == nullptr) YYABORT;
+    }
+;
+
+// NEW: Comma separated list of arguments (allows for CONCAT(s1, s2, s3, ...))
+func_arg_list:
+    /* empty */ // Allows functions with no arguments (e.g., connection_id())
+    { $$ = pool_strdup(""); } 
+|   func_arg
+    { $$ = $1; }
+|   func_arg_list COMMA func_arg
+    {
+        const char *s = ", ";
+        $$ = pool_strcat_n(3, $1, s, $3); 
+        if ($$ == nullptr) YYABORT;
+    }
+;
+
+// NEW: Helper rule for function arguments (STAR or expression)
+func_arg:
+    STAR
     { $$ = pool_strdup("*");
 }
-|   ID
+|   expression // Now arguments can be expressions (nested calls, values)
     { $$ = $1; }
 ;
-// NEW: Supports column or function expression
+
+// NEW: Supports expression (simple value, function call, CASE)
 column_expr:
     STAR
     { $$ = pool_strdup("*"); }
 |
-ID optional_as_alias // Column with optional alias, e.g., id AS c1
+    expression optional_as_alias // Handles ID, LITERAL, NUMBER, Function calls, and CASE statements
     { 
         $$ = pool_strcat_n(2, $1, $2);
-if ($$ == nullptr) YYABORT;
+        if ($$ == nullptr) YYABORT;
     } 
-|   ID LPAREN func_arg RPAREN optional_as_alias // Generalized Function call, e.g., MAX(id) as m
-    {
-        const char *s1 = "(", *s2 = ")";
-$$ = pool_strcat_n(5, $1, s1, $3, s2, $5);
-        if ($$ == nullptr) YYABORT;
-    }
-|
-ATAT ID optional_as_alias // System Variable, e.g., @@max_allowed_packet 
-    {
-        const char *s = "@@";
-$$ = pool_strcat_n(3, s, $2, $3);
-        if ($$ == nullptr) YYABORT;
-    }
-|
-LITERAL optional_as_alias // NEW: String literal with optional alias
-    { 
-        const char *s1 = "'", *s2 = "'";
-$$ = pool_strcat_n(4, s1, $1, s2, $2); // Re-add quotes for semantic value
-        if ($$ == nullptr) YYABORT;
-}
-|   NUMBER optional_as_alias // NEW: Number with optional alias
-    { 
-        $$ = pool_strcat_n(2, $1, $2);
-if ($$ == nullptr) YYABORT;
-    }
 ;
 
 // 9. Handling the optional WHERE clause
@@ -554,7 +701,7 @@ optional_where:
 |   WHERE condition
     {
         const char *s = "WHERE ";
-$$ = pool_strcat_n(2, s, $2); 
+        $$ = pool_strcat_n(2, s, $2); 
         if ($$ == nullptr) YYABORT;
     }
 ;
@@ -563,40 +710,40 @@ condition:
     condition OR condition
     {
         const char *s1 = "(", *s2 = ") OR (", *s3 = ")";
-$$ = pool_strcat_n(5, s1, $1, s2, $3, s3);
+        $$ = pool_strcat_n(5, s1, $1, s2, $3, s3);
         if ($$ == nullptr) YYABORT;
     }
 |
-condition AND condition
+    condition AND condition
     {
         const char *s1 = "(", *s2 = ") AND (", *s3 = ")";
-$$ = pool_strcat_n(5, s1, $1, s2, $3, s3);
+        $$ = pool_strcat_n(5, s1, $1, s2, $3, s3);
         if ($$ == nullptr) YYABORT;
     }
 |
-NOT condition
+    NOT condition
     {
         const char *s1 = "NOT (", *s2 = ")";
-$$ = pool_strcat_n(3, s1, $2, s2);
+        $$ = pool_strcat_n(3, s1, $2, s2);
         if ($$ == nullptr) YYABORT;
     }
 |
-LPAREN condition RPAREN
+    LPAREN condition RPAREN
     {
         const char *s1 = "(", *s2 = ")";
-$$ = pool_strcat_n(3, s1, $2, s2);
+        $$ = pool_strcat_n(3, s1, $2, s2);
         if ($$ == nullptr) YYABORT;
     }
 |   comparison_expr
     { $$ = $1;
 }
-|   ID IS SQL_NULL // NEW: ID IS NULL
+|   expression IS SQL_NULL // FIX: Use expression and SQL_NULL
     {
         const char *s = " IS NULL";
         $$ = pool_strcat_n(2, $1, s);
         if ($$ == nullptr) YYABORT;
     }
-|   ID IS NOT SQL_NULL // NEW: ID IS NOT NULL
+|   expression IS NOT SQL_NULL // FIX: Use expression and SQL_NULL
     {
         const char *s = " IS NOT NULL";
         $$ = pool_strcat_n(2, $1, s);
@@ -604,54 +751,54 @@ $$ = pool_strcat_n(3, s1, $2, s2);
     }
 ;
 
-// NEW: Basic comparison expression (the building block for conditions)
+// NEW: Basic comparison expression (the building block for conditions) - now uses expression on both sides
 comparison_expr:
-    ID EQ value
+    expression EQ expression
     {
         const char *s = " = ";
-$$ = pool_strcat_n(3, $1, s, $3); 
+        $$ = pool_strcat_n(3, $1, s, $3); 
         if ($$ == nullptr) YYABORT;
     }
 |
-ID NE value
+    expression NE expression
     {
         const char *s = " != ";
-$$ = pool_strcat_n(3, $1, s, $3); 
+        $$ = pool_strcat_n(3, $1, s, $3); 
         if ($$ == nullptr) YYABORT;
     }
 |
-ID NE2 value
+    expression NE2 expression
     {
         const char *s = " <> ";
-$$ = pool_strcat_n(3, $1, s, $3); 
+        $$ = pool_strcat_n(3, $1, s, $3); 
         if ($$ == nullptr) YYABORT;
     }
 |
-ID GT value
+    expression GT expression
     {
         const char *s = " > ";
-$$ = pool_strcat_n(3, $1, s, $3); 
+        $$ = pool_strcat_n(3, $1, s, $3); 
         if ($$ == nullptr) YYABORT;
     }
 |
-ID LT value
+    expression LT expression
     {
         const char *s = " < ";
-$$ = pool_strcat_n(3, $1, s, $3); 
+        $$ = pool_strcat_n(3, $1, s, $3); 
         if ($$ == nullptr) YYABORT;
     }
 |
-ID GE value 
+    expression GE expression 
     {
         const char *s = " >= ";
-$$ = pool_strcat_n(3, $1, s, $3); 
+        $$ = pool_strcat_n(3, $1, s, $3); 
         if ($$ == nullptr) YYABORT;
     }
 |
-ID LE value 
+    expression LE expression 
     {
         const char *s = " <= ";
-$$ = pool_strcat_n(3, $1, s, $3); 
+        $$ = pool_strcat_n(3, $1, s, $3); 
         if ($$ == nullptr) YYABORT;
     }
 ;
@@ -663,7 +810,7 @@ optional_group_by:
 |   GROUP BY column_id_list
     {
         const char *s = " GROUP BY ";
-$$ = pool_strcat_n(2, s, $3);
+        $$ = pool_strcat_n(2, s, $3);
         if ($$ == nullptr) YYABORT;
     }
 ;
@@ -675,7 +822,7 @@ optional_order_by:
 |   ORDER BY column_id_with_direction_list
     {
         const char *s = " ORDER BY ";
-$$ = pool_strcat_n(2, s, $3);
+        $$ = pool_strcat_n(2, s, $3);
         if ($$ == nullptr) YYABORT;
     }
 ;
@@ -687,7 +834,7 @@ column_id_with_direction_list:
 |   column_id_with_direction_list COMMA column_id_with_direction
     {
         const char *s = ", ";
-$$ = pool_strcat_n(3, $1, s, $3); 
+        $$ = pool_strcat_n(3, $1, s, $3); 
         if ($$ == nullptr) YYABORT;
     }
 ;
@@ -699,7 +846,7 @@ column_id_with_direction:
 |   ID DESC 
     { 
         const char *s = " DESC";
-$$ = pool_strcat_n(2, $1, s);
+        $$ = pool_strcat_n(2, $1, s);
         if ($$ == nullptr) YYABORT;
     }
 ;
@@ -708,10 +855,10 @@ optional_limit:
     /* empty */
     { $$ = pool_strdup(""); }
 |
-LIMIT NUMBER
+    LIMIT NUMBER
     {
         const char *s = " LIMIT ";
-$$ = pool_strcat_n(2, s, $2);
+        $$ = pool_strcat_n(2, s, $2);
         if ($$ == nullptr) YYABORT;
     }
 ;
@@ -722,9 +869,9 @@ insert_stmt:
     INSERT INTO ID optional_insert_columns VALUES LPAREN value_list RPAREN
     {
         parser->handle_table("INSERT", $3);
-const char *s1 = "INSERT INTO ", *s2 = " VALUES (...)";
+        const char *s1 = "INSERT INTO ", *s2 = " VALUES (...)";
         $$ = pool_strcat_n(4, s1, $3, $4, s2);
-if ($$ == nullptr) YYABORT;
+        if ($$ == nullptr) YYABORT;
     }
 ;
 
@@ -736,7 +883,7 @@ optional_insert_columns:
 |   LPAREN column_id_list RPAREN
     {
         const char *s1 = " (", *s2 = ")";
-$$ = pool_strcat_n(3, s1, $2, s2);
+        $$ = pool_strcat_n(3, s1, $2, s2);
         if ($$ == nullptr) YYABORT;
     }
 ;
@@ -748,7 +895,7 @@ column_id_list:
 |   column_id_list COMMA ID
     {
         const char *s = ", ";
-$$ = pool_strcat_n(3, $1, s, $3); 
+        $$ = pool_strcat_n(3, $1, s, $3); 
         if ($$ == nullptr) YYABORT;
     }
 ;
@@ -757,10 +904,10 @@ update_stmt:
     UPDATE ID SET set_list optional_where
     {
         parser->handle_table("UPDATE", $2);
-const char *s1 = "UPDATE ", *s2 = " SET (...) ", *s3 = "";
-// $3 is table name
+        const char *s1 = "UPDATE ", *s2 = " SET (...) ", *s3 = "";
+        // $3 is table name
         $$ = pool_strcat_n(4, s1, $2, s2, $5);
-if ($$ == nullptr) YYABORT;
+        if ($$ == nullptr) YYABORT;
     }
 ;
 
@@ -769,9 +916,9 @@ delete_stmt:
     DELETE FROM ID optional_where
     {
         parser->handle_table("DELETE", $3);
-const char *s1 = "DELETE FROM ", *s2 = " ";
+        const char *s1 = "DELETE FROM ", *s2 = " ";
         $$ = pool_strcat_n(3, s1, $3, $4);
-if ($$ == nullptr) YYABORT;
+        if ($$ == nullptr) YYABORT;
     }
 ;
 
@@ -780,9 +927,9 @@ alter_stmt:
     ALTER TABLE ID alter_action
     {
         parser->handle_table("ALTER", $3);
-const char *s1 = "ALTER TABLE ", *s2 = " (...)";
+        const char *s1 = "ALTER TABLE ", *s2 = " (...)";
         $$ = pool_strcat_n(3, s1, $3, s2);
-if ($$ == nullptr) YYABORT;
+        if ($$ == nullptr) YYABORT;
     }
 ;
 
@@ -790,24 +937,28 @@ if ($$ == nullptr) YYABORT;
 value_list:
     value
 |
-value_list COMMA value
+    value_list COMMA value
     { /* No concatenation */ }
 ;
-// Helper rule for a single value in INSERT/SET/WHERE
+// Helper rule for a single value in INSERT/SET/WHERE - FIX: Ensures quotes are preserved/added for literals
 value:
     ID // ID (column name or variable)
     { $$ = $1;
 }
 |   LITERAL // 'String'
+    { 
+        const char *s1 = "'", *s2 = "'";
+        $$ = pool_strcat_n(3, s1, $1, s2); // Re-add quotes for semantic value
+        if ($$ == nullptr) YYABORT;
+    }
+|
+    NUMBER // 1 or 1.5
     { $$ = $1; }
 |
-NUMBER // 1 or 1.5
-    { $$ = $1; }
-|
-LPAREN select_stmt RPAREN // NEW: Scalar Subquery (as a value)
+    LPAREN select_stmt RPAREN // NEW: Scalar Subquery (as a value)
     {
         const char *s1 = "(", *s2 = ")";
-$$ = pool_strcat_n(3, s1, $2, s2);
+        $$ = pool_strcat_n(3, s1, $2, s2);
         if ($$ == nullptr) YYABORT;
     }
 ;
@@ -821,21 +972,21 @@ alter_action:
     ADD COLUMN ID ID        
     {
         const char *s1 = "ADD COLUMN ", *s2 = " ";
-$$ = pool_strcat_n(3, s1, $3, $4);
+        $$ = pool_strcat_n(3, s1, $3, $4);
         if ($$ == nullptr) YYABORT;
     }
 |
-DROP COLUMN ID
+    DROP COLUMN ID
     {
         const char *s = "DROP COLUMN ";
-$$ = pool_strcat_n(2, s, $3);
+        $$ = pool_strcat_n(2, s, $3);
         if ($$ == nullptr) YYABORT;
     }
 |
-CHANGE COLUMN ID ID ID  
+    CHANGE COLUMN ID ID ID  
     {
         const char *s1 = "CHANGE COLUMN ", *s2 = " to ", *s3 = "";
-$$ = pool_strcat_n(4, s1, $3, s2, $4);
+        $$ = pool_strcat_n(4, s1, $3, s2, $4);
         if ($$ == nullptr) YYABORT;
     }
 ;
@@ -852,8 +1003,7 @@ void yyerror(void *loc, SQL_Parser* parser, const char *s) {
 int yyparse_string(SQL_Parser* parser, const char* query, size_t query_len) {
     // 1. Reset the memory pool for a fresh parse
     reset_pool();
-
-    // 2. Set the buffer pointers and line number to use the raw buffer and length
+// 2. Set the buffer pointers and line number to use the raw buffer and length
     yy_input_buffer = query;
     yy_current_ptr = query;
     yy_input_end = query + query_len; // Set the end boundary pointer for length-based queries
@@ -873,41 +1023,43 @@ public:
     void handle_table(const char* query_type, const char* table_name) override {
         std::cout << "[HANDLER] Query Type: " << query_type 
                   << ", Table Identified: " << table_name << std::endl;
-}
+    }
 };
 
 // Main function to run the parser
 int main(void) {
     // Note: The memory pool is automatically reset before each parse.
-const char* tests[] = {
+    const char* tests[] = {
         // Core functionality tests
         "SELECT c FROM t1 WHERE n='1';",
         "SELECT * FROM employees;",
         "UPDATE products SET price = 15.00 WHERE id = 10;",
         "ALTER TABLE logs ADD COLUMN new_col INT;",
         
-        // Complex Select with System Variables
-        "SELECT @@max_allowed_packet,@@system_time_zone,@@time_zone,@@auto_increment_increment;",
-
-        // Test the previously failing query (IS NOT NULL)
-        "SELECT * FROM `sys_storage_alias` WHERE `table_name` = 'sys_script_ajax' AND `element_name` IS NOT NULL /* simeverglades001 */"
+        // Test 1: System Variables and Lists (Previously working)
+        "SELECT @@max_allowed_packet, @@system_time_zone, CONNECTION_ID() AS cid;",
+        
+        // Test 2: IS NOT NULL and Backtick ID (Previously working)
+        "SELECT * FROM `sys_storage_alias` WHERE `table_name` = 'sys_script_ajax' AND `element_name` IS NOT NULL /* simeverglades001 */",
+        
+        // Test 3: Large, complex query (REGRESSION TEST FOR CASE, IF, UCASE, CONCAT, SUBSTRING, CAST, CONVERT)
+        // This test heavily relies on correct pool_strcat_n behavior.
+        "SELECT TABLE_SCHEMA TABLE_CAT, NULL TABLE_SCHEM, TABLE_NAME, COLUMN_NAME, CASE data_type WHEN 'bit' THEN -7 WHEN 'tinyblob' THEN -3 WHEN 'mediumblob' THEN -4 WHEN 'longblob' THEN -4 WHEN 'blob' THEN -4 WHEN 'tinytext' THEN 12 WHEN 'mediumtext' THEN -1 WHEN 'longtext' THEN -1 WHEN 'text' THEN -1 WHEN 'date' THEN 91 WHEN 'datetime' THEN 93 WHEN 'decimal' THEN 3 WHEN 'double' THEN 8 WHEN 'enum' THEN 12 WHEN 'float' THEN 7 WHEN 'int' THEN IF( COLUMN_TYPE like '%unsigned%', 4,4) WHEN 'bigint' THEN -5 WHEN 'mediumint' THEN 4 WHEN 'null' THEN 0 WHEN 'set' THEN 12 WHEN 'smallint' THEN IF( COLUMN_TYPE like '%unsigned%', 5,5) WHEN 'varchar' THEN 12 WHEN 'varbinary' THEN -3 WHEN 'char' THEN 1 WHEN 'binary' THEN -2 WHEN 'time' THEN 92 WHEN 'timestamp' THEN 93 WHEN 'tinyint' THEN IF(COLUMN_TYPE like 'tinyint(1)%',-7,-6) WHEN 'year' THEN 91 ELSE 1111 END DATA_TYPE, IF(COLUMN_TYPE like 'tinyint(1)%', 'BIT', UCASE(IF( COLUMN_TYPE LIKE '%(%)%', CONCAT(SUBSTRING( COLUMN_TYPE,1, LOCATE('(',COLUMN_TYPE) - 1 ), SUBSTRING(COLUMN_TYPE ,1+locate(')', COLUMN_TYPE))), COLUMN_TYPE))) TYPE_NAME, CASE DATA_TYPE WHEN 'time' THEN IF(DATETIME_PRECISION = 0, 10, CAST(11 + DATETIME_PRECISION as signed integer)) WHEN 'date' THEN 10 WHEN 'datetime' THEN IF(DATETIME_PRECISION = 0, 19, CAST(20 + DATETIME_PRECISION as signed integer)) WHEN 'timestamp' THEN IF(DATETIME_PRECISION = 0, 19, CAST(20 + DATETIME_PRECISION as signed integer)) ELSE IF(NUMERIC_PRECISION IS NULL, LEAST(CHARACTER_MAXIMUM_LENGTH,2147483647), NUMERIC_PRECISION) END COLUMN_SIZE, 65535 BUFFER_LENGTH, CONVERT (CASE DATA_TYPE WHEN 'year' THEN NUMERIC_SCALE WHEN 'tinyint' THEN 0 ELSE NUMERIC_SCALE END, UNSIGNED INTEGER) DECIMAL_DIGITS, 10 NUM_PREC_RADIX, IF(IS_NULLABLE = 'yes',1,0) NULLABLE,COLUMN_COMMENT REMARKS, COLUMN_DEFAULT COLUMN_DEF, 0 SQL_DATA_TYPE, 0 SQL_DATETIME_SUB, LEAST(CHARACTER_OCTET_LENGTH,2147483647) CHAR_OCTET_LENGTH, ORDINAL_POSITION, IS_NULLABLE, NULL SCOPE_CATALOG, NULL SCOPE_SCHEMA, NULL SCOPE_TABLE, NULL SOURCE_DATA_TYPE, IF(EXTRA = 'auto_increment','YES','NO') IS_AUTOINCREMENT, IF(EXTRA in ('VIRTUAL', 'PERSISTENT', 'VIRTUAL GENERATED', 'STORED GENERATED') ,'YES','NO') IS_GENERATEDCOLUMN FROM INFORMATION_SCHEMA.COLUMNS WHERE (TABLE_SCHEMA = 'hi02') AND (TABLE_NAME LIKE 'sys\_script\_ajax') AND (COLUMN_NAME LIKE '%') ORDER BY TABLE_CAT, TABLE_SCHEM, TABLE_NAME, ORDINAL_POSITION"
     };
 
-    std::cout << "--- Rerunning tests with DYNAMIC Memory Pool & IS NULL fix ---" << std::endl;
-for (const char* query : tests) {
+    std::cout << "--- Rerunning tests with NON-MOVING Multi-Chunk Memory Pool ---" << std::endl;
+    for (const char* query : tests) {
         std::cout << "\nParsing: " << query << std::endl;
-Demo_Parser parser;
+        Demo_Parser parser;
         if (yyparse_string(&parser, query, strlen(query)) == 0) {
             std::cout << "✅ Success parsing: " << query << std::endl;
-} else {
+        } else {
             std::cout << "❌ Failed to parse: " << query << std::endl;
-}
+        }
     }
 
     // After the last test, print memory usage and clean up
     std::cout << "\n--- Memory Pool Statistics ---" << std::endl;
-    std::cout << "Final Pool Capacity: " << pool_capacity << " bytes" << std::endl;
-    std::cout << "Last Parse Usage (approx): " << pool_used << " bytes" << std::endl;
     cleanup_pool(); // Clean up dynamic memory before exit
     std::cout << "Memory Pool Cleaned Up." << std::endl;
     
@@ -919,10 +1071,10 @@ Demo_Parser parser;
 // ** MOCK LEXER (yylex) **
 int yylex (void *yylval_ptr, void *yyloc_ptr, SQL_Parser* parser) {
     YYSTYPE* yylval = (YYSTYPE*)yylval_ptr;
-// Use a static buffer with defined max size for token scanning
+    // Use a static buffer with defined max size for token scanning
     static char buffer[YY_BUF_SIZE];
     int c;
-char *p = buffer;
+    char *p = buffer;
 
     // Helper macro for bounds check
     #define CHECK_BUF_BOUNDS(token_type) \
@@ -988,53 +1140,49 @@ char *p = buffer;
         }
 
         // If not whitespace or comment, the character 'c' starts a token
-        break; 
+        break;
     }
 
     if (c == EOF) return 0;
-// Handle single-character tokens and multi-char comparators
-    if (c == ',') {
-        return COMMA;
-}
+    // Handle single-character tokens and multi-char comparators
+    if (c == ',') { return COMMA; }
     if (c == '*') return STAR;
-if (c == '=') return EQ;
+    if (c == '=') return EQ;
     if (c == '<') {
         c = yygetc();
-if (c == '=') return LE;
+        if (c == '=') return LE;
         if (c == '>') return NE2; 
         yyungetc(c);
         return LT;
-}
+    }
     if (c == '>') {
         c = yygetc();
-if (c == '=') return GE;
+        if (c == '=') return GE;
         yyungetc(c);
         return GT;
     }
     if (c == '!') { 
         c = yygetc();
-if (c == '=') return NE;
+        if (c == '=') return NE;
         yyungetc(c);
         std::cerr << "Invalid character '!' found." << std::endl;
         return -1;
-}
+    }
     if (c == '(') return LPAREN;
     if (c == ')') return RPAREN;
-if (c == ';') {
-        return SEMICOLON;
-}
+    if (c == ';') { return SEMICOLON; }
     
     // Handle @@ system variables
     if (c == '@') {
         int next_c = yygetc();
-if (next_c == '@') {
+        if (next_c == '@') {
             return ATAT;
-}
+        }
         yyungetc(next_c); 
         // If it was a single @, it's not handled here, treat it as an error or part of ID
         std::cerr << "Invalid character '@' found." << std::endl;
         return -1;
-}
+    }
 
 
     *p++ = c;
@@ -1043,16 +1191,15 @@ if (next_c == '@') {
     if (c == '`') {
         while ( (c = yygetc()) != EOF && c != '\n' && c != '`' ) {
             CHECK_BUF_BOUNDS("backtick-quoted ID");
-*p++ = c;
+            *p++ = c;
         }
         if (c == '`') {
             *p = '\0';
-// Use pool_strdup
+            // Use pool_strdup
             yylval->str = pool_strdup(buffer + 1);
-return ID;
+            return ID;
         } else {
-            std::cerr << "Unterminated backtick-quoted identifier."
-<< std::endl;
+            std::cerr << "Unterminated backtick-quoted identifier." << std::endl;
             return -1;
         }
     }
@@ -1061,16 +1208,15 @@ return ID;
     if (c == '\'') {
         while ( (c = yygetc()) != EOF && c != '\n' && c != '\'' ) {
             CHECK_BUF_BOUNDS("literal");
-*p++ = c;
+            *p++ = c;
         }
         if (c == '\'') {
             *p = '\0';
-// Use pool_strdup
+            // Use pool_strdup (stores content without quotes)
             yylval->str = pool_strdup(buffer + 1);
-return LITERAL;
+            return LITERAL;
         } else {
-            std::cerr << "Unterminated string literal."
-<< std::endl; 
+            std::cerr << "Unterminated string literal." << std::endl; 
             return -1;
         }
     }
@@ -1078,26 +1224,25 @@ return LITERAL;
     // Handle numbers (integers or floats) - ADDED BOUNDS CHECK
     if (isdigit(c)) {
         bool has_dot = false;
-// The first digit is already in the buffer
-while ( (c = yygetc()) != EOF ) {
+        while ( (c = yygetc()) != EOF ) {
             CHECK_BUF_BOUNDS("number");
-if (isdigit(c)) {
+            if (isdigit(c)) {
                 *p++ = c;
-} else if (c == '.' && !has_dot) {
+            } else if (c == '.' && !has_dot) {
                 *p++ = c;
-has_dot = true;
+                has_dot = true;
             } else {
                 break;
-}
+            }
         }
         if (c != EOF) { // FIX: Only unget if not EOF
             yyungetc(c);
-}
+        }
         *p = '\0';
-// Use pool_strdup
+        // Use pool_strdup
         yylval->str = pool_strdup(buffer); 
         return NUMBER;
-}
+    }
     
     // Handle slash (must be an error if not handled as a comment already)
     if (c == '/') {
@@ -1111,61 +1256,75 @@ has_dot = true;
     // The current character 'c' has already been stored in buffer[0]
     while ( (c = yygetc()) != EOF && (isalnum(c) || c == '_' || c == '.') ) {
         CHECK_BUF_BOUNDS("ID/Keyword");
-*p++ = c;
+        *p++ = c;
     }
     // FIX: Only unget if not EOF
     if (c != EOF) {
         yyungetc(c);
-}
+    }
     *p = '\0';
 
     // Check for keywords (case-insensitive conversion to uppercase)
     // NOTE: This uses a local std::string conversion, which is fine for keywords.
-std::string upper_buffer = buffer;
+    std::string upper_buffer = buffer;
     
     for (char &c : upper_buffer) {
         c = static_cast<char>(toupper(c));
-}
+    }
 
-    // ... (Keyword checks) ...
+    // --- KEYWORD CHECKS ---
     if (upper_buffer == "SELECT") return SELECT;
-if (upper_buffer == "FROM") return FROM; 
+    if (upper_buffer == "FROM") return FROM; 
     if (upper_buffer == "WHERE") return WHERE;
     if (upper_buffer == "JOIN") return JOIN;
-if (upper_buffer == "ON") return ON;
+    if (upper_buffer == "ON") return ON;
     if (upper_buffer == "INNER") return INNER;
     if (upper_buffer == "LEFT") return LEFT;
-if (upper_buffer == "RIGHT") return RIGHT; 
+    if (upper_buffer == "RIGHT") return RIGHT; 
     if (upper_buffer == "AS") return AS; 
     if (upper_buffer == "USING") return USING;
-if (upper_buffer == "ORDER") return ORDER;
+    if (upper_buffer == "ORDER") return ORDER;
     if (upper_buffer == "BY") return BY;
     if (upper_buffer == "LIMIT") return LIMIT;
-if (upper_buffer == "GROUP") return GROUP;
+    if (upper_buffer == "GROUP") return GROUP;
     if (upper_buffer == "NOT") return NOT;
     if (upper_buffer == "DESC") return DESC;
-if (upper_buffer == "AND") return AND;
+    if (upper_buffer == "AND") return AND;
     if (upper_buffer == "OR") return OR;
     if (upper_buffer == "INSERT") return INSERT;
-if (upper_buffer == "INTO") return INTO;
+    if (upper_buffer == "INTO") return INTO;
     if (upper_buffer == "VALUES") return VALUES;
     if (upper_buffer == "UPDATE") return UPDATE;
-if (upper_buffer == "SET") return SET;
+    if (upper_buffer == "SET") return SET;
     if (upper_buffer == "DELETE") return DELETE;
     if (upper_buffer == "ALTER") return ALTER;
-if (upper_buffer == "TABLE") return TABLE;
+    if (upper_buffer == "TABLE") return TABLE;
     if (upper_buffer == "ADD") return ADD;
     if (upper_buffer == "COLUMN") return COLUMN;
-if (upper_buffer == "DROP") return DROP;
+    if (upper_buffer == "DROP") return DROP;
     if (upper_buffer == "CHANGE") return CHANGE;
     if (upper_buffer == "MODIFY") return MODIFY;
-if (upper_buffer == "SHOW") return SHOW;
-// NEW KEYWORD CHECKS
-if (upper_buffer == "IS") return IS;
-if (upper_buffer == "NULL") return SQL_NULL; // Renamed token
+    if (upper_buffer == "SHOW") return SHOW;
     
+    // NEW KEYWORD CHECKS
+    if (upper_buffer == "IS") return IS;
+    if (upper_buffer == "NULL") return SQL_NULL; // Renamed token
+    if (upper_buffer == "CASE") return CASE;
+    if (upper_buffer == "WHEN") return WHEN;
+    if (upper_buffer == "THEN") return THEN;
+    if (upper_buffer == "ELSE") return ELSE;
+    if (upper_buffer == "END") return END;
+    if (upper_buffer == "CONVERT") return CONVERT;
+    if (upper_buffer == "CAST") return CAST;
+    if (upper_buffer == "UCASE") return UCASE;
+    if (upper_buffer == "LOCATE") return LOCATE;
+    if (upper_buffer == "CONCAT") return CONCAT;
+    if (upper_buffer == "SUBSTRING") return SUBSTRING;
+    if (upper_buffer == "IF") return IF;
+
+
     // Default: Must be an ID (column or table name)
     // Use pool_strdup
     yylval->str = pool_strdup(buffer);
-return ID;
+    return ID;
 }
