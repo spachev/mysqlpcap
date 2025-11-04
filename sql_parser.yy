@@ -248,10 +248,12 @@ extern void cleanup_pool();
 %token IS SQL_NULL LIKE
 %token ATAT // NEW: System Variable Prefix @@
 // NEW TOKENS for CASE and Functions
-%token CASE WHEN THEN ELSE END
+%token CASE WHEN THEN ELSE END LEAST // Added LEAST
 %token CONVERT CAST UCASE LOCATE CONCAT SUBSTRING IF
 // NEW TOKENS for Arithmetic
-%token PLUS MINUS DIV // Removed MULT token, using STAR for '*'
+%token PLUS MINUS DIV 
+// NEW TOKENS for Type Specifiers
+%token SIGNED UNSIGNED INTEGER // Added SIGNED, UNSIGNED, INTEGER
 
 // Simple Value Tokens
 %token <str> ID      
@@ -272,7 +274,7 @@ comparison_expr
 // NEW non-terminals for JOIN specification
 %type <str> join_specifier
 // NEW non-terminals for complex expressions
-%type <str> func_arg func_arg_list expression case_stmt case_when_clauses case_when_clause optional_else type_name 
+%type <str> func_arg func_arg_list expression case_stmt case_when_clauses case_when_clause optional_else type_name type_word
 // NEW non-terminals for SELECT extensions
 %type <str> optional_group_by optional_order_by optional_limit column_id_with_direction_list column_id_with_direction
 %type <str> optional_from_clause 
@@ -369,6 +371,10 @@ show_content_token:
 |   THEN {$$ = pool_strdup("THEN");}
 |   ELSE {$$ = pool_strdup("ELSE");}
 |   END {$$ = pool_strdup("END");}
+|   LEAST {$$ = pool_strdup("LEAST");}
+|   SIGNED {$$ = pool_strdup("SIGNED");}
+|   UNSIGNED {$$ = pool_strdup("UNSIGNED");}
+|   INTEGER {$$ = pool_strdup("INTEGER");}
 |   LITERAL {$$ = pool_strcat_n(3, "'", $1, "'");} // Keep quotes for literal to preserve type
 |   NUMBER {$$ = $1;}
 |   STAR {$$ = pool_strdup("*");}
@@ -580,7 +586,7 @@ expression:
         $$ = pool_strcat_n(5, s1, $3, s2, $5, s3);
         if ($$ == nullptr) YYABORT;
     }
-|   CONVERT LPAREN expression COMMA expression RPAREN // CONVERT(expression, expression) - allows type to be ID/LITERAL/function
+|   CONVERT LPAREN expression COMMA type_name RPAREN // Updated to use type_name (e.g., CONVERT(..., UNSIGNED INTEGER))
     {
         const char *s1 = "CONVERT(", *s2 = ", ", *s3 = ")";
         $$ = pool_strcat_n(5, s1, $3, s2, $5, s3);
@@ -616,7 +622,19 @@ expression:
         $$ = pool_strcat_n(7, s1, $3, s2, $5, s3, $7, s4);
         if ($$ == nullptr) YYABORT;
     }
-|   ID LPAREN func_arg_list RPAREN // Generic function call (e.g., IF(x,y,z), MAX(c1), CONNECTION_ID())
+|   LEAST LPAREN func_arg_list RPAREN // Added for LEAST function
+    {
+        const char *s1 = "LEAST(", *s2 = ")";
+        $$ = pool_strcat_n(3, s1, $3, s2);
+        if ($$ == nullptr) YYABORT;
+    }
+|   IF LPAREN func_arg_list RPAREN // Added for IF function
+    {
+        const char *s1 = "IF(", *s2 = ")";
+        $$ = pool_strcat_n(3, s1, $3, s2);
+        if ($$ == nullptr) YYABORT;
+    }
+|   ID LPAREN func_arg_list RPAREN // Generic function call (e.g., MAX(c1), CONNECTION_ID())
     {
         const char *s1 = "(", *s2 = ")";
         $$ = pool_strcat_n(4, $1, s1, $3, s2);
@@ -638,11 +656,19 @@ expression:
     }
 ;
 
+// NEW: Helper rule for type components (ID or reserved type keywords)
+type_word:
+    ID {$$ = $1;}
+|   SIGNED {$$ = pool_strdup("SIGNED");}
+|   UNSIGNED {$$ = pool_strdup("UNSIGNED");}
+|   INTEGER {$$ = pool_strdup("INTEGER");}
+;
+
 // NEW: Helper rule for type names with spaces (e.g., 'signed integer')
 type_name:
-    ID
+    type_word
     { $$ = $1; }
-|   type_name ID
+|   type_name type_word
     {
         const char *s = " ";
         $$ = pool_strcat_n(3, $1, s, $2);
@@ -1357,6 +1383,10 @@ int yylex (void *yylval_ptr, void *yyloc_ptr, SQL_Parser* parser) {
     if (upper_buffer == "CONCAT") return CONCAT;
     if (upper_buffer == "SUBSTRING") return SUBSTRING;
     if (upper_buffer == "IF") return IF;
+    if (upper_buffer == "LEAST") return LEAST; // Added
+    if (upper_buffer == "SIGNED") return SIGNED; // Added
+    if (upper_buffer == "UNSIGNED") return UNSIGNED; // Added
+    if (upper_buffer == "INTEGER") return INTEGER; // Added
 
 
     // Default: Must be an ID (column or table name)
