@@ -147,6 +147,13 @@ void Table_stats::update_table(const char* table_token, const char* type, double
     it->second.register_query(type, exec_time);
 }
 
+unsigned int str_sum(const char* s, size_t len)
+{
+    unsigned int sum = 0;
+    for (size_t i = 0; i < len; i++)
+        sum += s[i];
+    return sum;
+}
 
 void Table_stats::update_from_query(const char* query, size_t query_len, double exec_time)
 {
@@ -261,6 +268,11 @@ int main() {
             "select c from dual",
             "select c from t1",
             "select c from t1 where n=1",
+            "show character set",
+            "show character set; /* comment */",
+            "select connection_id()",
+            "SELECT `storage_alias` FROM `sys_storage_table_alias` WHERE `table_name` = 'sys_script_ajax'",
+            "SELECT `storage_alias` FROM `sys_storage_table_alias` WHERE `table_name` = 'sys_script_ajax' /* simeverglades001 */ ",
         };
 
         const size_t num_queries = sizeof(queries) / sizeof(queries[0]);
