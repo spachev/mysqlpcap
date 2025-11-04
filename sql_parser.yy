@@ -6,27 +6,56 @@
 #include <string>
 #include <cstring>
 #include <cctype>
-#include <cstdlib>
+#include <cstdlib> // Required for std::realloc and std::free
 #include <sstream> 
 #include <algorithm> 
 #include <cstdarg> // Required for va_list for safe custom strcat
 #include <stdexcept> // For runtime_error
 
-// --- MEMORY POOL (ARENA ALLOCATOR) IMPLEMENTATION ---
-#define POOL_SIZE 4096 // 4KB pool for all string semantic values
+// --- MEMORY POOL (ARENA ALLOCATOR) IMPLEMENTATION (NOW DYNAMIC) ---
+#define DEFAULT_POOL_SIZE 4096 // Initial 4KB size
 #define YY_BUF_SIZE 256 // Max size for lexer token buffer
 
-char pool[POOL_SIZE];
+char* pool = nullptr; // Dynamically allocated memory block
+size_t pool_capacity = 0; // Current capacity of the pool
 size_t pool_used = 0;
 
-// Function to allocate memory from the pool
+// Function to allocate memory from the pool (NOW DYNAMIC)
 char* pool_alloc(size_t size) {
-    // Round up size to ensure alignment (e.g., to 4 or 8 bytes), although not strictly necessary for char*
-    if (pool_used + size > POOL_SIZE) {
-        std::cerr << "❌ ERROR: Memory pool exhausted. Size requested: " << size << " bytes."
-<< std::endl;
-        return nullptr;
+    size_t new_pool_used = pool_used + size;
+    
+    // 1. Check if the current capacity is enough
+    if (new_pool_used > pool_capacity) {
+        size_t new_capacity = pool_capacity == 0 ? DEFAULT_POOL_SIZE : pool_capacity;
+        
+        // 2. Calculate the next capacity (exponential growth or minimum required)
+        while (new_pool_used > new_capacity) {
+            // Check for overflow before multiplying
+            if (new_capacity > (size_t)-1 / 2) { 
+                new_capacity = new_pool_used;
+                if (new_pool_used > new_capacity) { // If requested size itself overflowed
+                    std::cerr << "❌ ERROR: Requested size causes capacity overflow." << std::endl;
+                    return nullptr;
+                }
+                break;
+            }
+            new_capacity *= 2; 
+        }
+
+        // 3. Reallocate the memory block
+        // Use std::realloc for in-place growth if possible
+        char* new_pool = (char*)std::realloc(pool, new_capacity);
+        
+        if (new_pool == nullptr) {
+            std::cerr << "❌ ERROR: Memory reallocation failed (requested capacity: " << new_capacity << " bytes)." << std::endl;
+            return nullptr;
+        }
+        
+        pool = new_pool;
+        pool_capacity = new_capacity;
     }
+
+    // 4. Allocation is guaranteed to succeed now
     char* ptr = pool + pool_used;
     pool_used += size;
     return ptr;
@@ -35,12 +64,11 @@ char* pool_alloc(size_t size) {
 // Function to allocate and copy a string into the pool (replaces strdup)
 char* pool_strdup(const char* s) {
     if (!s) return nullptr;
-size_t len = strlen(s) + 1;
+    size_t len = strlen(s) + 1;
     char* ptr = pool_alloc(len);
-if (ptr) {
+    if (ptr) {
         memcpy(ptr, s, len);
-        ptr[len-1] = '\0';
-// Ensure null termination
+        ptr[len-1] = '\0'; // Ensure null termination
     }
     return ptr;
 }
@@ -51,49 +79,56 @@ if (ptr) {
 char* pool_strcat_n(int count, ...) {
     va_list args;
     va_start(args, count);
-// Step 1: Calculate total required length
+    // Step 1: Calculate total required length
     size_t total_len = 0;
     va_list args_copy;
     va_copy(args_copy, args);
-for (int i = 0; i < count; ++i) {
+    for (int i = 0; i < count; ++i) {
         const char* s = va_arg(args_copy, const char*);
-if (s) {
+        if (s) {
             total_len += strlen(s);
-}
+        }
     }
     va_end(args_copy);
 
-    size_t required_size = total_len + 1;
-// +1 for null terminator
+    size_t required_size = total_len + 1; // +1 for null terminator
     
-    // Step 2: Allocate from pool
+    // Step 2: Allocate from pool (handles resizing)
     char* buffer = pool_alloc(required_size);
-if (!buffer) {
+    if (!buffer) {
         va_end(args);
-        return nullptr;
-// Pool exhausted
+        return nullptr; // Pool exhausted (or reallocation failed)
     }
 
     // Step 3: Concatenate strings into the allocated buffer
     char* current_pos = buffer;
-for (int i = 0; i < count; ++i) {
+    for (int i = 0; i < count; ++i) {
         const char* s = va_arg(args, const char*);
-if (s) {
+        if (s) {
             size_t len = strlen(s);
-memcpy(current_pos, s, len);
+            memcpy(current_pos, s, len);
             current_pos += len;
         }
     }
     va_end(args);
 
-    *current_pos = '\0';
-// Null-terminate the final string
+    *current_pos = '\0'; // Null-terminate the final string
     return buffer;
 }
 
 
 // Function to reset the pool
 void reset_pool() {
+    pool_used = 0;
+}
+
+// Function to clean up all allocated memory
+void cleanup_pool() {
+    if (pool) {
+        std::free(pool);
+        pool = nullptr;
+    }
+    pool_capacity = 0;
     pool_used = 0;
 }
 // --- END MEMORY POOL IMPLEMENTATION ---
@@ -103,11 +138,11 @@ int yylineno = 1;
 // --- Input Buffer Management Globals ---
 const char* yy_input_buffer = nullptr;
 const char* yy_current_ptr = nullptr;
-const char* yy_input_end = nullptr; // FIX: Pointer to 1 past the last valid character
+const char* yy_input_end = nullptr; // Pointer to 1 past the last valid character
 
 // Function to read the next character from the in-memory buffer, replacing getchar()
 int yygetc() {
-    if (yy_current_ptr >= yy_input_end) { // FIX: Check against end pointer instead of '\0'
+    if (yy_current_ptr >= yy_input_end) { // Check against end pointer instead of '\0'
         return EOF;
     }
     int c = *yy_current_ptr;
@@ -120,7 +155,7 @@ int yygetc() {
 void yyungetc(int c) {
     if (yy_current_ptr > yy_input_buffer) {
         yy_current_ptr--;
-if (*yy_current_ptr == '\n') yylineno--;
+        if (*yy_current_ptr == '\n') yylineno--;
     }
 }
 }
@@ -138,7 +173,7 @@ if (*yy_current_ptr == '\n') yylineno--;
 class SQL_Parser {
 public:
     virtual void handle_table(const char* query_type, const char* table_name) = 0;
-virtual ~SQL_Parser() {}
+    virtual ~SQL_Parser() {}
 };
 
 // Forward declaration of the concrete parser 
@@ -151,6 +186,8 @@ extern int yylex(void *yylval_ptr, void *yyloc_ptr, SQL_Parser* parser);
 int yyparse_string(SQL_Parser* parser, const char* query, size_t query_len);
 // Corrected yyerror signature for reentrant parser with location tracking.
 void yyerror(void *loc, SQL_Parser* parser, const char *s);
+// Function to clean up the dynamic memory pool
+extern void cleanup_pool();
 }
 
 // --- Bison Directives ---
@@ -168,7 +205,7 @@ void yyerror(void *loc, SQL_Parser* parser, const char *s);
 // Define the types of values non-terminals and tokens can return
 %union {
     char *str;
-int num;
+    int num;
 }
 
 // Enable location tracking.
@@ -185,6 +222,8 @@ int num;
 // NEW TOKENS for ORDER BY, LIMIT, GROUP BY, NOT, AND, OR
 %token ORDER BY LIMIT GROUP NOT AND OR 
 %token DESC 
+// NEW TOKENS for NULL handling (RENAMED to SQL_NULL to avoid C++ conflict)
+%token IS SQL_NULL 
 %token ATAT // NEW: System Variable Prefix @@
 
 // Simple Value Tokens
@@ -197,7 +236,7 @@ int num;
 GE NE NE2 // Add NE2 for <>
 
 // Non-Terminal Symbols
-%type <str> query statement select_stmt show_stmt show_content column_list table_list table_ref join_list join_clause optional_where condition comparison_expr
+%type <str> query statement select_stmt show_stmt show_content show_content_token column_list table_list table_ref join_list join_clause optional_where condition comparison_expr
 // New non-terminals
 %type <str> insert_stmt update_stmt delete_stmt alter_stmt alter_action value value_list set_list
 // Added non-terminals for new syntax features
@@ -210,8 +249,6 @@ GE NE NE2 // Add NE2 for <>
 %type <str> optional_group_by optional_order_by optional_limit column_id_with_direction_list column_id_with_direction
 %type <str> optional_from_clause // NEW: To make FROM optional for variable/literal selects
 %type <str> optional_join_type 
-// NEW: Placeholder for any token after SHOW (must not be a terminal)
-%type <str> show_content_token 
 
 // --- Operator Precedence ---
 %left OR
@@ -292,6 +329,8 @@ show_content_token:
 |   CHANGE {$$ = pool_strdup("CHANGE");}
 |   MODIFY {$$ = pool_strdup("MODIFY");}
 |   SHOW {$$ = pool_strdup("SHOW");}
+|   IS {$$ = pool_strdup("IS");}
+|   SQL_NULL {$$ = pool_strdup("NULL");} // Use SQL_NULL token, output string "NULL"
 |   LITERAL {$$ = pool_strcat_n(3, "'", $1, "'");} // Keep quotes for literal to preserve type
 |   NUMBER {$$ = $1;}
 |   STAR {$$ = pool_strdup("*");}
@@ -463,7 +502,7 @@ $$ = pool_strcat_n(3, $1, s, $3);
 // NEW: Helper rule for function arguments (STAR, ID, or EMPTY)
 func_arg:
     /* empty */
-    { $$ = pool_strdup(""); } // FIX: Allows functions with no arguments (e.g., connection_id())
+    { $$ = pool_strdup(""); } // Allows functions with no arguments (e.g., connection_id())
 |   STAR
     { $$ = pool_strdup("*");
 }
@@ -519,7 +558,7 @@ $$ = pool_strcat_n(2, s, $2);
         if ($$ == nullptr) YYABORT;
     }
 ;
-// 10. Handling a complex condition (UPDATED for AND/OR and parentheses)
+// 10. Handling a complex condition (UPDATED for AND/OR, parentheses, and IS NULL/IS NOT NULL)
 condition:
     condition OR condition
     {
@@ -551,6 +590,18 @@ $$ = pool_strcat_n(3, s1, $2, s2);
 |   comparison_expr
     { $$ = $1;
 }
+|   ID IS SQL_NULL // NEW: ID IS NULL
+    {
+        const char *s = " IS NULL";
+        $$ = pool_strcat_n(2, $1, s);
+        if ($$ == nullptr) YYABORT;
+    }
+|   ID IS NOT SQL_NULL // NEW: ID IS NOT NULL
+    {
+        const char *s = " IS NOT NULL";
+        $$ = pool_strcat_n(2, $1, s);
+        if ($$ == nullptr) YYABORT;
+    }
 ;
 
 // NEW: Basic comparison expression (the building block for conditions)
@@ -805,11 +856,13 @@ int yyparse_string(SQL_Parser* parser, const char* query, size_t query_len) {
     // 2. Set the buffer pointers and line number to use the raw buffer and length
     yy_input_buffer = query;
     yy_current_ptr = query;
-    yy_input_end = query + query_len; // FIX: Set the end boundary pointer for non-null terminated strings
+    yy_input_end = query + query_len; // Set the end boundary pointer for length-based queries
     yylineno = 1;
 
     // 3. Call the parser (yyparse)
-    return yyparse(parser);
+    int result = yyparse(parser);
+
+    return result;
 }
 
 #ifdef TEST_SQL_PARSER
@@ -833,12 +886,14 @@ const char* tests[] = {
         "UPDATE products SET price = 15.00 WHERE id = 10;",
         "ALTER TABLE logs ADD COLUMN new_col INT;",
         
-        // Fails: Test for multiple system variables in column list
-     
-    "SELECT @@max_allowed_packet,@@system_time_zone,@@time_zone,@@auto_increment_increment;"
+        // Complex Select with System Variables
+        "SELECT @@max_allowed_packet,@@system_time_zone,@@time_zone,@@auto_increment_increment;",
+
+        // Test the previously failing query (IS NOT NULL)
+        "SELECT * FROM `sys_storage_alias` WHERE `table_name` = 'sys_script_ajax' AND `element_name` IS NOT NULL /* simeverglades001 */"
     };
 
-    std::cout << "--- Rerunning tests with Memory Pool and Safe Concatenation ---" << std::endl;
+    std::cout << "--- Rerunning tests with DYNAMIC Memory Pool & IS NULL fix ---" << std::endl;
 for (const char* query : tests) {
         std::cout << "\nParsing: " << query << std::endl;
 Demo_Parser parser;
@@ -849,11 +904,12 @@ Demo_Parser parser;
 }
     }
 
-    // After the last test, print memory usage
+    // After the last test, print memory usage and clean up
     std::cout << "\n--- Memory Pool Statistics ---" << std::endl;
-std::cout << "Total Pool Size: " << POOL_SIZE << " bytes" << std::endl;
-std::cout << "Last Parse Usage (approx): " << pool_used << " bytes" << std::endl;
-// Note: pool_used reflects the last query parsed
+    std::cout << "Final Pool Capacity: " << pool_capacity << " bytes" << std::endl;
+    std::cout << "Last Parse Usage (approx): " << pool_used << " bytes" << std::endl;
+    cleanup_pool(); // Clean up dynamic memory before exit
+    std::cout << "Memory Pool Cleaned Up." << std::endl;
     
     return 0;
 }
@@ -1104,6 +1160,9 @@ if (upper_buffer == "DROP") return DROP;
     if (upper_buffer == "CHANGE") return CHANGE;
     if (upper_buffer == "MODIFY") return MODIFY;
 if (upper_buffer == "SHOW") return SHOW;
+// NEW KEYWORD CHECKS
+if (upper_buffer == "IS") return IS;
+if (upper_buffer == "NULL") return SQL_NULL; // Renamed token
     
     // Default: Must be an ID (column or table name)
     // Use pool_strdup
