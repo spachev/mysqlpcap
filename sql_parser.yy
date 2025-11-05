@@ -157,6 +157,7 @@ void reset_pool() {
 
 // Global variable for line number 
 int yylineno = 1;
+int yycolno = 1;
 // --- Input Buffer Management Globals ---
 const char* yy_input_buffer = nullptr;
 const char* yy_current_ptr = nullptr;
@@ -169,7 +170,12 @@ int yygetc() {
     }
     int c = *yy_current_ptr;
     yy_current_ptr++;
-    if (c == '\n') yylineno++;
+    if (c == '\n') {
+        yylineno++;
+        yycolno = 1; // Reset column on newline
+    } else {
+        yycolno++; // Increment column for any other character
+    }
     return c;
 }
 
@@ -178,6 +184,8 @@ void yyungetc(int c) {
     if (yy_current_ptr > yy_input_buffer) {
         yy_current_ptr--;
         if (*yy_current_ptr == '\n') yylineno--;
+        else
+            yycolno--;
     }
 }
 }
@@ -245,7 +253,7 @@ extern void cleanup_pool();
 %token ORDER BY LIMIT GROUP NOT AND OR 
 %token DESC 
 // NEW TOKENS for NULL handling 
-%token IS SQL_NULL LIKE
+%token IS SQL_NULL LIKE IN
 %token ATAT // NEW: System Variable Prefix @@
 // NEW TOKENS for CASE and Functions
 %token CASE WHEN THEN ELSE END LEAST // Added LEAST
@@ -742,12 +750,13 @@ func_arg_list:
     }
 ;
 
-// NEW: Helper rule for function arguments (STAR or expression)
 func_arg:
-    STAR // For COUNT(*), etc.
+    STAR
     { $$ = pool_strdup("*");
 }
-|   expression // Now arguments can be expressions (nested calls, values)
+|   expression
+    { $$ = $1; }
+|   condition // NEW: Allow boolean conditions (like a>3 for IF function)
     { $$ = $1; }
 ;
 
@@ -902,6 +911,14 @@ comparison_expr:
     {
         const char *s = " LIKE ";
         $$ = pool_strcat_n(3, $1, s, $3); 
+        if ($$ == nullptr) YYABORT;
+    }
+|
+    expression IN LPAREN value_list RPAREN 
+    {
+        // This rule parses: expression IN ( value_list )
+        const char *s1 = " IN (", *s2 = ")";
+        $$ = pool_strcat_n(3, $1, s1, $4, s2);
         if ($$ == nullptr) YYABORT;
     }
 ;
@@ -1101,7 +1118,7 @@ alter_action:
 
 // Corrected yyerror implementation order: (location, parser_context, error_message)
 void yyerror(void *loc, SQL_Parser* parser, const char *s) {
-    std::cerr << "❌ Parse Error: " << s << " at line " << yylineno << std::endl;
+    std::cerr << "❌ Parse Error: " << s << " at line " << yylineno << " col " << yycolno << std::endl;
 }
 
 // New function to parse a query string
@@ -1383,6 +1400,7 @@ int yylex (void *yylval_ptr, void *yyloc_ptr, SQL_Parser* parser) {
     if (upper_buffer == "CONCAT") return CONCAT;
     if (upper_buffer == "SUBSTRING") return SUBSTRING;
     if (upper_buffer == "IF") return IF;
+    if (upper_buffer == "IN") return IN;
     if (upper_buffer == "LEAST") return LEAST; // Added
     if (upper_buffer == "SIGNED") return SIGNED; // Added
     if (upper_buffer == "UNSIGNED") return UNSIGNED; // Added
