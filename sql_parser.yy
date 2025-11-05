@@ -270,11 +270,11 @@ extern void cleanup_pool();
 
 // Comparator Tokens
 %token EQ LT GT LE 
-GE NE NE2 // Add NE2 for <>
+GE NE NE2 DOT // Add NE2 for <>
 
 // Non-Terminal Symbols
 %type <str> query statement select_stmt show_stmt show_content show_content_token column_list table_list table_ref join_list join_clause optional_where 
-comparison_expr
+comparison_expr join_prefix
 // New non-terminals
 %type <str> insert_stmt update_stmt delete_stmt alter_stmt alter_action value value_list set_list
 // Added non-terminals for new syntax features
@@ -286,7 +286,6 @@ comparison_expr
 // NEW non-terminals for SELECT extensions
 %type <str> optional_group_by optional_order_by optional_limit column_id_with_direction_list column_id_with_direction
 %type <str> optional_from_clause 
-%type <str> optional_join_type 
 // NEW: For robust Boolean precedence
 %type <str> condition or_condition and_condition not_condition final_condition
 
@@ -444,7 +443,7 @@ comma_separated_table_list:
         if ($$ == nullptr) YYABORT;
     }
 ;
-// 4. Handling the primary table reference and potential alias
+
 table_ref:
     ID optional_as_alias 
     {
@@ -452,6 +451,13 @@ table_ref:
         $$ = pool_strcat_n(2, $1, $2);
         if ($$ == nullptr) YYABORT;
     }
+|   ID DOT ID optional_as_alias
+    {
+        const char *s1 = ".", *s2 = "";
+        // $1 = information_schema, $3 = columns, $4 = optional alias
+        $$ = pool_strcat_n(4, $1, s1, $3, $4);
+        if ($$ == nullptr) YYABORT;
+    }    
 |
     LPAREN ID RPAREN optional_as_alias 
     {
@@ -460,13 +466,20 @@ table_ref:
         $$ = pool_strcat_n(4, s1, $2, s2, $4);
         if ($$ == nullptr) YYABORT;
     }
-|   LPAREN select_stmt RPAREN optional_as_alias 
+|   LPAREN select_stmt RPAREN optional_as_alias // Handles Subquery (select_stmt)
+    {
+        const char *s1 = "(", *s2 = ")";
+        $$ = pool_strcat_n(4, s1, $2, s2, $4);
+        if ($$ == nullptr) YYABORT;
+    }
+|   LPAREN table_list RPAREN optional_as_alias // <-- NEW RULE: Handles (table JOIN table) alias
     {
         const char *s1 = "(", *s2 = ")";
         $$ = pool_strcat_n(4, s1, $2, s2, $4);
         if ($$ == nullptr) YYABORT;
     }
 ;
+
 // NEW: Handles both implicit and explicit aliases
 optional_as_alias:
     /* empty */
@@ -498,29 +511,24 @@ join_list:
         if ($$ == nullptr) YYABORT;
     }
 ;
-// 7. Optional join type keywords (e.g., INNER, LEFT, RIGHT)
-optional_join_type:
-    /* empty */
-    { $$ = pool_strdup("");
-}
-|   INNER
-    { $$ = pool_strdup("INNER "); }
-|   LEFT
-    { $$ = pool_strdup("LEFT ");
-}
-|   RIGHT
-    { $$ = pool_strdup("RIGHT "); }
+
+join_prefix:
+    INNER JOIN { $$ = pool_strdup("INNER JOIN "); }
+|   LEFT JOIN { $$ = pool_strdup("LEFT JOIN "); } // Handles the LEFT JOIN case
+|   RIGHT JOIN { $$ = pool_strdup("RIGHT JOIN "); }
+|   JOIN { $$ = pool_strdup("JOIN "); } // Handles simple JOIN (usually INNER)
 ;
-// 6. Structure of a single join clause
+
+// 6. Structure of a single join clause (Modified)
 join_clause:
-    optional_join_type JOIN table_ref join_specifier 
+    join_prefix table_ref join_specifier 
     {
-        const char *s1 = "JOIN ";
-        const char *s2 = " ";
-        $$ = pool_strcat_n(4, $1, s1, $3, $4); 
+        // $1 is the join type/keyword (e.g., "LEFT JOIN ")
+        $$ = pool_strcat_n(3, $1, $2, $3); 
         if ($$ == nullptr) YYABORT;
     }
 ;
+
 // NEW: Handles the ON or USING part of a JOIN clause
 join_specifier:
     ON condition
@@ -554,6 +562,19 @@ column_list:
 
 // NEW: A comprehensive expression non-terminal that can handle CASE, nested functions, and arithmetic
 expression:
+    ID DOT ID // NEW: Handles alias.column or table.column
+        {
+            const char *s = ".";
+            $$ = pool_strcat_n(3, $1, s, $3);
+            if ($$ == nullptr) YYABORT;
+        }
+    |   ID DOT ID DOT ID // Optional: Handles db.table.column
+        {
+            const char *s = ".";
+            $$ = pool_strcat_n(5, $1, s, $3, s, $5);
+            if ($$ == nullptr) YYABORT;
+        }
+    |
     value // Simple value (ID, LITERAL, NUMBER, Subquery, NULL)
     { 
         $$ = $1; 
@@ -1130,6 +1151,7 @@ int yyparse_string(SQL_Parser* parser, const char* query, size_t query_len) {
     yy_current_ptr = query;
     yy_input_end = query + query_len; // Set the end boundary pointer for length-based queries
     yylineno = 1;
+    yycolno = 1;
 
     // 3. Call the parser (yyparse)
     int result = yyparse(parser);
@@ -1245,6 +1267,7 @@ int yylex (void *yylval_ptr, void *yyloc_ptr, SQL_Parser* parser) {
     if (c == '(') return LPAREN;
     if (c == ')') return RPAREN;
     if (c == ';') { return SEMICOLON; }
+    if (c == '.') { return DOT; }
     
     // NEW: Arithmetic tokens
     if (c == '+') { return PLUS; }
@@ -1301,28 +1324,45 @@ int yylex (void *yylval_ptr, void *yyloc_ptr, SQL_Parser* parser) {
         }
     }
 
-    // Handle numbers (integers or floats) - ADDED BOUNDS CHECK
-    if (isdigit(c)) {
-        bool has_dot = false;
-        while ( (c = yygetc()) != EOF ) {
-            CHECK_BUF_BOUNDS("number");
-            if (isdigit(c)) {
-                *p++ = c;
-            } else if (c == '.' && !has_dot) {
-                *p++ = c;
-                has_dot = true;
-            } else {
-                break;
+if (isdigit(c)) { // Start with a digit
+        *p++ = c;
+
+        // 1. Scan the rest of the integer part
+        while ( (c = yygetc()) != EOF && isdigit(c) ) {
+            CHECK_BUF_BOUNDS("NUMBER");
+            *p++ = c;
+        }
+
+        // 2. Check for the fractional part (dot)
+        if (c == '.') {
+            *p++ = c; // Consume the dot
+
+            // Scan fractional digits (must handle case like "15." or "15.00")
+            // We use a separate loop variable (dot_c) for clarity
+            int dot_c = yygetc();
+            while (dot_c != EOF && isdigit(dot_c)) {
+                CHECK_BUF_BOUNDS("NUMBER");
+                *p++ = dot_c;
+                dot_c = yygetc();
+            }
+            
+            // Put back the character that terminated the fractional part (e.g., the 'W' in WHERE)
+            if (dot_c != EOF) {
+                yyungetc(dot_c);
+            }
+            
+        } else {
+            // If the number was an integer (no dot), put back the character
+            // that terminated the integer (e.g., the space or 'W')
+            if (c != EOF) {
+                yyungetc(c);
             }
         }
-        if (c != EOF) { // FIX: Only unget if not EOF
-            yyungetc(c);
-        }
+        
         *p = '\0';
-        // Use pool_strdup
         yylval->str = pool_strdup(buffer); 
         return NUMBER;
-    }
+    }    
     
     // Handle slash (must be an error if not handled as a comment already)
     if (c == '/') {
@@ -1333,7 +1373,7 @@ int yylex (void *yylval_ptr, void *yyloc_ptr, SQL_Parser* parser) {
 
     // Handle keywords and IDs - ADDED BOUNDS CHECK
     // The current character 'c' has already been stored in buffer[0]
-    while ( (c = yygetc()) != EOF && (isalnum(c) || c == '_' || c == '.') ) {
+    while ( (c = yygetc()) != EOF && (isalnum(c) || c == '_') ) {
         CHECK_BUF_BOUNDS("ID/Keyword");
         *p++ = c;
     }
