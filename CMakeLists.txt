@@ -89,7 +89,7 @@ target_link_libraries(mysqlpcap
 
 # --- Test Executables ---
 add_executable(test_query_pattern query_pattern.cc)
-add_executable(test_table_stats table_stats.cc     ${BISON_SQL_PARSER_OUTPUT_SOURCE} ${BISON_SQL_PARSER_OUTPUT_HEADER})
+add_executable(test_table_stats table_stats.cc  query_pattern.cc   ${BISON_SQL_PARSER_OUTPUT_SOURCE} ${BISON_SQL_PARSER_OUTPUT_HEADER})
 add_dependencies(test_table_stats SQL_PARSER)
 add_executable(test_pcap_detect pcap_detect.cc)
 

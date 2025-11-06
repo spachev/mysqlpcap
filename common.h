@@ -6,7 +6,10 @@
 #include <assert.h>
 #include <mysql.h>
 #include <atomic>
+#include <vector>
 #include <netinet/in.h>
+
+#include "query_pattern.h"
 
 typedef unsigned long long u_longlong;
 typedef unsigned long long ulonglong;
@@ -176,6 +179,40 @@ struct sniff_tcp {
         u_short th_win;                 /* window */
         u_short th_sum;                 /* checksum */
         u_short th_urp;                 /* urgent pointer */
+};
+
+struct param_info
+{
+    std::vector<Query_pattern*> query_patterns;
+    u_int n_slow_queries;
+    u_int ethernet_header_size;
+    bool do_explain;
+    bool do_analyze;
+    bool do_run;
+    bool report_progress;
+    bool assert_on_query_error;
+    off_t pcap_file_size;
+    bool ignore_dup_key_errors;
+    const char* csv_file;
+    const char* table_stats_file;
+    bool verbose;
+
+    param_info():n_slow_queries(0), ethernet_header_size(0), do_explain(0),
+        do_analyze(0), do_run(0),report_progress(false),assert_on_query_error(false), pcap_file_size(0),
+        ignore_dup_key_errors(false),csv_file(0),table_stats_file(0),verbose(false)
+    {
+    }
+
+    void add_query_pattern(const char* arg);
+
+    ~param_info()
+    {
+        for (size_t i = 0; i < query_patterns.size(); i++)
+        {
+            delete query_patterns[i];
+        }
+        query_patterns.clear();
+    }
 };
 
 #endif

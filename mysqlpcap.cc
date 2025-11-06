@@ -83,13 +83,14 @@ static struct option long_options[] =
   {"csv", required_argument, 0, CSV},
   {"table-stats", required_argument, 0, TABLE_STATS},
   {"version", no_argument, 0, 'v'},
+  {"verbose", no_argument, 0, 'V'},
   {"help", no_argument, 0, 'H'},
   {0, 0, 0, 0}
 };
 
 static const char* fname = NULL;
 static struct in_addr mysql_ip;
-static param_info info;
+param_info info;
 
 void die(const char* msg, ...)
 {
@@ -218,7 +219,7 @@ void parse_args(int argc, char** argv)
   while (1)
   {
     int option_index = 0;
-    int c = getopt_long (argc, argv, "i:p:n:h:e:EARq:",
+    int c = getopt_long (argc, argv, "i:p:n:h:e:EvVARq:",
                          long_options, &option_index);
 
     if (c == -1)
@@ -238,6 +239,9 @@ void parse_args(int argc, char** argv)
         break;
       case 'e':
         info.ethernet_header_size = atoi(optarg);
+        break;
+      case 'V':
+        info.verbose = true;
         break;
       case 'E':
         info.do_explain = true;

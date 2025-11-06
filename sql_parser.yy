@@ -242,7 +242,7 @@ extern void cleanup_pool();
 %locations
 
 // Token Definitions (Keywords are typically uppercase)
-%token SELECT FROM WHERE JOIN ON INNER LEFT RIGHT
+%token SELECT FROM WHERE JOIN ON INNER LEFT RIGHT UNION
 %token AS
 %token USING 
 // New tokens for DML/DDL
@@ -412,7 +412,7 @@ select_stmt:
 
 // NEW: Handles the optional FROM table_list clause
 optional_from_clause:
-    /* empty */ %prec LOW_PREC 
+    /* empty */  %empty %prec LOW_PREC 
     { $$ = pool_strdup("");
 }
 |   FROM table_list
@@ -434,7 +434,7 @@ table_list:
 // NEW: Handles the comma-separated list of tables (implicit join)
 comma_separated_table_list:
     /* empty */
-    { $$ = pool_strdup("");
+     %empty { $$ = pool_strdup("");
 }
 |   comma_separated_table_list COMMA table_ref
     {
@@ -483,7 +483,7 @@ table_ref:
 // NEW: Handles both implicit and explicit aliases
 optional_as_alias:
     /* empty */
-    { $$ = pool_strdup("");
+     %empty { $$ = pool_strdup("");
 }
 |   AS ID 
     { 
@@ -502,7 +502,7 @@ optional_as_alias:
 // 5. Handling zero or more explicit joins
 join_list:
     /* empty */
-    { $$ = pool_strdup("");
+     %empty { $$ = pool_strdup("");
 }
 |   join_list join_clause
     {
@@ -748,7 +748,7 @@ case_when_clause:
 
 optional_else:
     /* empty */
-    { $$ = pool_strdup(""); }
+     %empty { $$ = pool_strdup(""); }
 |   ELSE expression
     {
         const char *s = " ELSE ";
@@ -760,7 +760,7 @@ optional_else:
 // NEW: Comma separated list of arguments (allows for CONCAT(s1, s2, s3, ...))
 func_arg_list:
     /* empty */ // Allows functions with no arguments (e.g., connection_id())
-    { $$ = pool_strdup(""); } 
+     %empty { $$ = pool_strdup(""); } 
 |   func_arg
     { $$ = $1; }
 |   func_arg_list COMMA func_arg
@@ -801,7 +801,7 @@ column_expr:
 // 9. Handling the optional WHERE clause
 optional_where:
     /* empty */
-    { $$ = pool_strdup("");
+     %empty { $$ = pool_strdup("");
 }
 |   WHERE condition
     {
@@ -946,7 +946,7 @@ comparison_expr:
 // NEW: 15. Optional GROUP BY clause
 optional_group_by:
     /* empty */
-    { $$ = pool_strdup("");
+     %empty { $$ = pool_strdup("");
 }
 |   GROUP BY column_id_list
     {
@@ -958,7 +958,7 @@ optional_group_by:
 // NEW: 16. Optional ORDER BY clause
 optional_order_by:
     /* empty */
-    { $$ = pool_strdup("");
+     %empty { $$ = pool_strdup("");
 }
 |   ORDER BY column_id_with_direction_list
     {
@@ -981,10 +981,10 @@ column_id_with_direction_list:
 ;
 // NEW: Helper rule for a single column with optional direction
 column_id_with_direction:
-    ID
+    expression
     { $$ = $1;
 }
-|   ID DESC 
+|   expression DESC 
     { 
         const char *s = " DESC";
         $$ = pool_strcat_n(2, $1, s);
@@ -994,12 +994,19 @@ column_id_with_direction:
 // NEW: 17. Optional LIMIT clause
 optional_limit:
     /* empty */
-    { $$ = pool_strdup(""); }
+     %empty { $$ = pool_strdup(""); }
 |
     LIMIT NUMBER
     {
         const char *s = " LIMIT ";
         $$ = pool_strcat_n(2, s, $2);
+        if ($$ == nullptr) YYABORT;
+    }
+|
+    LIMIT NUMBER COMMA NUMBER
+    {
+        const char *s = " LIMIT ";
+        $$ = pool_strcat_n(2, s, $2, ",", $4);
         if ($$ == nullptr) YYABORT;
     }
 ;
@@ -1019,7 +1026,7 @@ insert_stmt:
 // NEW: Handles the optional column list in INSERT
 optional_insert_columns:
     /* empty */
-    { $$ = pool_strdup("");
+     %empty { $$ = pool_strdup("");
 }
 |   LPAREN column_id_list RPAREN
     {
@@ -1302,7 +1309,7 @@ int yylex (void *yylval_ptr, void *yyloc_ptr, SQL_Parser* parser) {
             yylval->str = pool_strdup(buffer + 1);
             return ID;
         } else {
-            std::cerr << "Unterminated backtick-quoted identifier." << std::endl;
+            std::cerr << "Unterminated backtick-quoted identifier (ascii): " << (int)c << std::endl;
             return -1;
         }
     }
@@ -1373,7 +1380,7 @@ if (isdigit(c)) { // Start with a digit
 
     // Handle keywords and IDs - ADDED BOUNDS CHECK
     // The current character 'c' has already been stored in buffer[0]
-    while ( (c = yygetc()) != EOF && (isalnum(c) || c == '_') ) {
+    while ( (c = yygetc()) != EOF && (isalnum(c) || c == '_' || c == '$') ) {
         CHECK_BUF_BOUNDS("ID/Keyword");
         *p++ = c;
     }
@@ -1395,6 +1402,7 @@ if (isdigit(c)) { // Start with a digit
     if (upper_buffer == "FROM") return FROM; 
     if (upper_buffer == "WHERE") return WHERE;
     if (upper_buffer == "JOIN") return JOIN;
+    if (upper_buffer == "UNION") return UNION;
     if (upper_buffer == "ON") return ON;
     if (upper_buffer == "INNER") return INNER;
     if (upper_buffer == "LEFT") return LEFT;
