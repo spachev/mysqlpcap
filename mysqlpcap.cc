@@ -48,7 +48,6 @@ const char* replay_ssl_ca = 0;
 const char* replay_ssl_key = 0;
 const char* record_for_replay_file = 0;
 
-
 uint replay_port = 3306;
 uint _mysql_port = 3306;
 double replay_speed = 1.0;

@@ -260,6 +260,8 @@ bool Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u
     u_longlong key = in ? get_key(ip_header->ip_src.s_addr, tcp_header->th_sport) :
         get_key(ip_header->ip_dst.s_addr, tcp_header->th_dport);
 
+    //fprintf(stderr, "key=%llu in=%d len=%u could be query = %d\n", key, in, len, could_be_query(data, len));
+
 
     Mysql_stream *s;
     std::map<u_longlong, Mysql_stream*>::iterator it;

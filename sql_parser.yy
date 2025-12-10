@@ -221,7 +221,14 @@ extern void cleanup_pool();
 }
 
 // --- Bison Directives ---
-
+%code {
+#ifdef DEBUG_BISON
+}
+%debug
+%define parse.error verbose
+%code {
+#endif
+}
 // Enable pure reentrant parser (for C++)
 %define api.pure full
 
@@ -242,7 +249,7 @@ extern void cleanup_pool();
 %locations
 
 // Token Definitions (Keywords are typically uppercase)
-%token SELECT FROM WHERE JOIN ON INNER LEFT RIGHT UNION
+%token SELECT FROM WHERE JOIN ON INNER LEFT RIGHT UNION ALL
 %token AS
 %token USING 
 // New tokens for DML/DDL
@@ -262,21 +269,25 @@ extern void cleanup_pool();
 %token PLUS MINUS DIV 
 // NEW TOKENS for Type Specifiers
 %token SIGNED UNSIGNED INTEGER // Added SIGNED, UNSIGNED, INTEGER
+%token FORCE IGNORE KEY INDEX DISTINCT EXISTS
 
 // Simple Value Tokens
 %token <str> ID      
 %token <str> LITERAL 
 %token <str> NUMBER  
 
+
+%type <str> index_hint_clause index_list optional_index_hints
+
 // Comparator Tokens
 %token EQ LT GT LE 
 GE NE NE2 DOT // Add NE2 for <>
 
 // Non-Terminal Symbols
-%type <str> query statement select_stmt show_stmt show_content show_content_token column_list table_list table_ref join_list join_clause optional_where 
-comparison_expr join_prefix
+%type <str> query statement select_stmt show_stmt show_content show_content_token column_list table_list table_ref  join_list join_clause optional_where selectable_unit
+ comparison_expr join_prefix select_query
 // New non-terminals
-%type <str> insert_stmt update_stmt delete_stmt alter_stmt alter_action value value_list set_list
+%type <str> insert_stmt update_stmt delete_stmt union_stmt alter_stmt alter_action value value_list set_list
 // Added non-terminals for new syntax features
 %type <str> column_expr optional_as_alias comma_separated_table_list optional_insert_columns column_id_list
 // NEW non-terminals for JOIN specification
@@ -288,9 +299,11 @@ comparison_expr join_prefix
 %type <str> optional_from_clause 
 // NEW: For robust Boolean precedence
 %type <str> condition or_condition and_condition not_condition final_condition
+%type <str> index_hint_chain
 
 
 // --- Operator Precedence ---
+%precedence HINT_PREC
 %left OR
 %left AND
 %left LIKE 
@@ -299,6 +312,7 @@ comparison_expr join_prefix
 %left STAR DIV // Using STAR for multiplication precedence
 %left COMMA
 %nonassoc LOW_PREC // Used for Unary Minus binding
+%precedence LOWEST_PREC
 
 %%
 
@@ -317,13 +331,64 @@ query:
 
 // 1a. SQL Statement body
 statement:
-    select_stmt
+   select_query
 |   insert_stmt
 |   update_stmt
 |   delete_stmt
 |   alter_stmt
 |   show_stmt
     { $$ = $1; }
+;
+
+selectable_unit:
+    select_stmt
+    { $$ = $1;
+    }
+|   LPAREN select_stmt RPAREN
+    {
+        const char *s1 = "(", *s2 = ")";
+        $$ = pool_strcat_n(3, s1, $2, s2);
+        if ($$ == nullptr) YYABORT;
+    }
+;
+
+select_query:
+    union_stmt optional_order_by optional_limit
+    {
+        const char *s = " ";
+        // Concatenate union result ($1), optional_order_by ($2), optional_limit ($3)
+        $$ = pool_strcat_n(6, $1, s, $2, s, $3, s);
+        if ($$ == nullptr) YYABORT;
+    }
+|
+    union_stmt // Handles case with no final ORDER BY/LIMIT
+    { $$ = $1; }
+;
+
+union_stmt:
+    selectable_unit
+    { $$ = $1; }
+|
+    union_stmt UNION selectable_unit
+    {
+        const char *s = " UNION ";
+        // Recursively build the union string: (S1) UNION (S2)
+        $$ = pool_strcat_n(3, $1, s, $3);
+        if ($$ == nullptr) YYABORT;
+    }
+|
+    union_stmt UNION ALL selectable_unit
+    {
+        const char *s = " UNION ALL ";
+        // Recursively build the union all string: (S1) UNION ALL (S2)
+        $$ = pool_strcat_n(3, $1, s, $4); // Note: $4 is the select_stmt
+        if ($$ == nullptr) YYABORT;
+    }
+|
+    LPAREN union_stmt RPAREN
+    {
+        $$ = $2;
+    }
 ;
 
 show_stmt:
@@ -399,7 +464,7 @@ show_content:
         if ($$ == nullptr) YYABORT;
     }
 ;
-// 2. Structure of a SELECT statement
+
 select_stmt:
     SELECT column_list optional_from_clause optional_where optional_group_by optional_order_by optional_limit
     {
@@ -445,13 +510,13 @@ comma_separated_table_list:
 ;
 
 table_ref:
-    ID optional_as_alias 
+    ID optional_as_alias optional_index_hints
     {
         parser->handle_table("SELECT", $1);
         $$ = pool_strcat_n(2, $1, $2);
         if ($$ == nullptr) YYABORT;
     }
-|   ID DOT ID optional_as_alias
+|   ID DOT ID optional_as_alias optional_index_hints
     {
         const char *s1 = ".", *s2 = "";
         // $1 = information_schema, $3 = columns, $4 = optional alias
@@ -459,14 +524,14 @@ table_ref:
         if ($$ == nullptr) YYABORT;
     }    
 |
-    LPAREN ID RPAREN optional_as_alias 
+    LPAREN ID RPAREN optional_as_alias optional_index_hints
     {
         parser->handle_table("SELECT", $2);
         const char *s1 = "(", *s2 = ")";
         $$ = pool_strcat_n(4, s1, $2, s2, $4);
         if ($$ == nullptr) YYABORT;
     }
-|   LPAREN select_stmt RPAREN optional_as_alias // Handles Subquery (select_stmt)
+|   LPAREN union_stmt RPAREN optional_as_alias // Handles Subquery (select_stmt)
     {
         const char *s1 = "(", *s2 = ")";
         $$ = pool_strcat_n(4, s1, $2, s2, $4);
@@ -609,6 +674,12 @@ expression:
         $$ = pool_strcat_n(3, $1, s, $3);
         if ($$ == nullptr) YYABORT;
     }
+|   DISTINCT expression
+{
+       const char *s = " DISTINCT ";
+        $$ = pool_strcat_n(2, s, $2);
+        if ($$ == nullptr) YYABORT;
+}
 |   CAST LPAREN expression AS type_name RPAREN 
     {
         const char *s1 = "CAST(", *s2 = " AS ", *s3 = ")";
@@ -683,6 +754,11 @@ expression:
         $$ = pool_strcat_n(2, s, $2);
         if ($$ == nullptr) YYABORT;
     }
+|   EXISTS LPAREN union_stmt RPAREN
+{
+        $$ = pool_strcat_n(2, "EXISTS ", $3);
+        if ($$ == nullptr) YYABORT;
+ }
 ;
 
 // NEW: Helper rule for type components (ID or reserved type keywords)
@@ -752,7 +828,7 @@ optional_else:
 |   ELSE expression
     {
         const char *s = " ELSE ";
-        $$ = pool_strcat_n(2, $2, $2);
+        $$ = pool_strcat_n(2, s, $2);
         if ($$ == nullptr) YYABORT;
     }
 ;
@@ -814,6 +890,9 @@ optional_where:
 // 10a. Root condition rule
 condition:
     or_condition
+    { $$ = $1; }
+|
+    expression
     { $$ = $1; }
 ;
 
@@ -877,7 +956,6 @@ final_condition:
     }
 ;
 
-// 10. (Old: was 10) comparison_expr is the base for final_condition
 comparison_expr:
     expression EQ expression
     {
@@ -942,8 +1020,34 @@ comparison_expr:
         $$ = pool_strcat_n(3, $1, s1, $4, s2);
         if ($$ == nullptr) YYABORT;
     }
+|
+    expression NOT IN LPAREN value_list RPAREN
+    {
+        // This rule parses: expression IN ( value_list )
+        const char *s1 = " NOT IN (", *s2 = ")";
+        $$ = pool_strcat_n(3, $1, s1, $5, s2);
+        if ($$ == nullptr) YYABORT;
+    }
+|
+    expression IN LPAREN select_stmt RPAREN
+    {
+        const char *s1 = " IN (", *s2 = ")";
+        $$ = pool_strcat_n(3, $1, s1, $4, s2);
+        if ($$ == nullptr) YYABORT;
+    }
+|
+    expression NOT IN LPAREN select_stmt RPAREN
+    {
+        const char *s1 = " NOT IN (", *s2 = ")";
+        $$ = pool_strcat_n(3, $1, s1, $5, s2);
+        if ($$ == nullptr) YYABORT;
+    }
+|
+    expression
+    {
+        $$ = $1;
+    }
 ;
-// NEW: 15. Optional GROUP BY clause
 optional_group_by:
     /* empty */
      %empty { $$ = pool_strdup("");
@@ -1037,10 +1141,10 @@ optional_insert_columns:
 ;
 // NEW: A comma-separated list of column IDs (used by GROUP BY and INSERT)
 column_id_list:
-    ID
+    column_expr
     { $$ = $1;
 }
-|   column_id_list COMMA ID
+|   column_id_list COMMA column_expr
     {
         const char *s = ", ";
         $$ = pool_strcat_n(3, $1, s, $3); 
@@ -1100,8 +1204,14 @@ value:
         if ($$ == nullptr) YYABORT;
     }
 |
-    NUMBER // 1 or 1.5
+    NUMBER
     { $$ = $1; }
+|
+    MINUS NUMBER
+    {
+        $$ = pool_strcat_n(2, "-1", $2);
+        if ($$ == nullptr) YYABORT;
+    }
 |
     LPAREN select_stmt RPAREN // NEW: Scalar Subquery (as a value)
     {
@@ -1140,13 +1250,81 @@ alter_action:
         if ($$ == nullptr) YYABORT;
     }
 ;
+
+// NEW: A list of index names, e.g., i1, i2, primary
+index_list:
+    ID
+    { $$ = $1; }
+|   index_list COMMA ID
+    {
+        const char *s = ", ";
+        $$ = pool_strcat_n(3, $1, s, $3);
+        if ($$ == nullptr) YYABORT;
+    }
+;
+
+
+optional_index_hints:
+    /* empty */ %empty %prec LOWEST_PREC
+    { /* fprintf(stderr, "empty index hint match\n");*/ $$ = pool_strdup(""); if ($$ == nullptr) YYABORT; }
+|   index_hint_chain
+;
+
+// Define the index_hint_clause to explicitly look for the full sequence.
+index_hint_clause:
+    // 1. The form causing the error: IGNORE INDEX (list)
+    IGNORE INDEX LPAREN index_list RPAREN
+    {
+        const char *s1 = " IGNORE INDEX (", *s2 = ")";
+        $$ = pool_strcat_n(3, s1, $4, s2); // $4 is the index_list
+        if ($$ == nullptr) YYABORT;
+    }
+|
+    // 2. The other 'key_or_index_type' variant: IGNORE KEY (list)
+    IGNORE KEY LPAREN index_list RPAREN
+    {
+        const char *s1 = " IGNORE KEY (", *s2 = ")";
+        $$ = pool_strcat_n(3, s1, $4, s2);
+        if ($$ == nullptr) YYABORT;
+    }
+|
+    // 3. The shorthand form: IGNORE (list)
+    IGNORE LPAREN index_list RPAREN
+    {
+        const char *s1 = " IGNORE (", *s2 = ")";
+        $$ = pool_strcat_n(3, s1, $3, s2);
+        if ($$ == nullptr) YYABORT;
+    }
+|
+    // Ensure all FORCE and USING variants are also explicitly defined
+    FORCE INDEX LPAREN index_list RPAREN 
+    {
+        const char *s1 = " FORCE (", *s2 = ")";
+        $$ = pool_strcat_n(3, s1, $4, s2);
+        if ($$ == nullptr) YYABORT;
+
+    }
+;
+
+index_hint_chain:
+    index_hint_clause
+    { $$ = $1; }
+|   index_hint_chain index_hint_clause
+    {
+        // Concatenate multiple hints, preserving order
+        $$ = pool_strcat_n(2, $1, $2);
+        if ($$ == nullptr) YYABORT;
+    }
+;
+
 %%
 
 // --- Auxiliary C++ Code (Implementations) ---
 
 // Corrected yyerror implementation order: (location, parser_context, error_message)
 void yyerror(void *loc, SQL_Parser* parser, const char *s) {
-    std::cerr << "❌ Parse Error: " << s << " at line " << yylineno << " col " << yycolno << std::endl;
+    std::cerr << "❌ Parse Error: " << s << " at line " << yylineno << " col " << yycolno
+         << std::endl;
 }
 
 // New function to parse a query string
@@ -1170,7 +1348,6 @@ int yyparse_string(SQL_Parser* parser, const char* query, size_t query_len) {
 // ... (TEST_SQL_PARSER content removed for brevity, assuming main is external)
 #endif
 
-// ** MOCK LEXER (yylex) **
 int yylex (void *yylval_ptr, void *yyloc_ptr, SQL_Parser* parser) {
     YYSTYPE* yylval = (YYSTYPE*)yylval_ptr;
     // Use a static buffer with defined max size for token scanning
@@ -1214,7 +1391,7 @@ int yylex (void *yylval_ptr, void *yyloc_ptr, SQL_Parser* parser) {
             if (c == EOF) return 0; // End of file immediately after comment
             continue; // Go back to loop start to skip any following whitespace
         }
-        
+
         // Multi-line comment: /* ... */
         if (c == '/') {
             int next_c = yygetc();
@@ -1238,12 +1415,12 @@ int yylex (void *yylval_ptr, void *yyloc_ptr, SQL_Parser* parser) {
                 continue; // Comment consumed, go back to loop start to skip any following whitespace
             }
             yyungetc(next_c); // Not a comment, push back and handle '/' later
-            break; 
+            break;
         }
-
         // If not whitespace or comment, the character 'c' starts a token
         break;
     }
+
 
     if (c == EOF) return 0;
     
@@ -1403,6 +1580,7 @@ if (isdigit(c)) { // Start with a digit
     if (upper_buffer == "WHERE") return WHERE;
     if (upper_buffer == "JOIN") return JOIN;
     if (upper_buffer == "UNION") return UNION;
+    if (upper_buffer == "ALL") return ALL;
     if (upper_buffer == "ON") return ON;
     if (upper_buffer == "INNER") return INNER;
     if (upper_buffer == "LEFT") return LEFT;
@@ -1432,9 +1610,9 @@ if (isdigit(c)) { // Start with a digit
     if (upper_buffer == "MODIFY") return MODIFY;
     if (upper_buffer == "SHOW") return SHOW;
     
-    // NEW KEYWORD CHECKS
     if (upper_buffer == "IS") return IS;
-    if (upper_buffer == "NULL") return SQL_NULL; 
+    if (upper_buffer == "EXISTS") return EXISTS;
+    if (upper_buffer == "NULL") return SQL_NULL;
     if (upper_buffer == "LIKE") return LIKE; 
     if (upper_buffer == "CASE") return CASE;
     if (upper_buffer == "WHEN") return WHEN;
@@ -1453,10 +1631,15 @@ if (isdigit(c)) { // Start with a digit
     if (upper_buffer == "SIGNED") return SIGNED; // Added
     if (upper_buffer == "UNSIGNED") return UNSIGNED; // Added
     if (upper_buffer == "INTEGER") return INTEGER; // Added
-
+    if (upper_buffer == "INDEX") return INDEX;
+    if (upper_buffer == "IGNORE") return IGNORE;
+    if (upper_buffer == "FORCE") return FORCE;
+    if (upper_buffer == "KEY") return KEY;
+    if (upper_buffer == "DISTINCT") return DISTINCT;
 
     // Default: Must be an ID (column or table name)
     // Use pool_strdup
     yylval->str = pool_strdup(buffer);
+    //fprintf(stderr, "ID=%s\n", yylval->str);
     return ID;
 }
