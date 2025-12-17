@@ -3,21 +3,34 @@
 # MySQL TLS Traffic Decryption Script using TShark (Wireshark CLI)
 # -----------------------------------------------------------------------------
 
-# --- CONFIGURATION (MUST EDIT) ---
+# --- ARGUMENT PARSING ---
 
-# 1. Path to your captured traffic file (.pcap, .pcapng)
-PCAP_FILE="./mysql_traffic_encrypted.pcapng"
+# Define a function to display usage instructions
+usage() {
+    echo "Usage: $0 <PCAP_FILE> <SERVER_KEY> <SERVER_IP> [MYSQL_PORT]"
+    echo ""
+    echo "Arguments:"
+    echo "  PCAP_FILE    : Path to your captured traffic file (.pcap, .pcapng)."
+    echo "  SERVER_KEY   : Path to the server's private key file (e.g., server.key)."
+    echo "  SERVER_IP    : MySQL Server's IP Address (e.g., 139.144.7.163)."
+    echo "  MYSQL_PORT   : MySQL Port (Optional, defaults to 3306)."
+    echo ""
+    exit 1
+}
 
-# 2. Path to the server's private key file
-SERVER_KEY="./server.key"
+# Check if mandatory arguments are provided (at least 3: PCAP, Key, IP)
+if [ $# -lt 3 ]; then
+    usage
+fi
 
-# 3. MySQL Server's IP Address
-SERVER_IP="139.144.7.163"
+# Assign command line arguments to variables
+PCAP_FILE="$1"
+SERVER_KEY="$2"
+SERVER_IP="$3"
+# Set MYSQL_PORT to the 4th argument, or default to 3306
+MYSQL_PORT="${4:-3306}"
 
-# 4. MySQL Port (usually 3306)
-MYSQL_PORT="3306"
-
-# --- EXECUTION ---
+# --- PRE-EXECUTION CHECKS ---
 
 echo "Starting TShark Decryption..."
 echo "Input File: $PCAP_FILE"
@@ -29,16 +42,18 @@ echo "-----------------------------------------------------------------"
 if ! command -v tshark &> /dev/null
 then
     echo "Error: TShark (Wireshark CLI) is not installed."
-    echo "Please install the Wireshark package on your system."
+    echo "Please install the Wireshark package on your system (e.g., sudo apt install wireshark)."
     exit 1
 fi
 
 # Check if the necessary input files exist
 if [ ! -f "$PCAP_FILE" ] || [ ! -f "$SERVER_KEY" ]; then
     echo "Error: Missing PCAP file ($PCAP_FILE) or Server Key file ($SERVER_KEY)."
-    echo "Please ensure the paths above are correct."
+    echo "Please ensure the paths provided are correct."
     exit 1
 fi
+
+# --- EXECUTION ---
 
 # The TShark command:
 # -r $PCAP_FILE          : Read the input capture file
@@ -47,11 +62,13 @@ fi
 # -Y "mysql"             : Apply a display filter to show only MySQL protocol traffic (the decrypted result)
 # -V                     : Show packet details in verbose mode (optional, you can change to -T fields for less output)
 # -n                     : Disable network object name resolution (speeds up processing)
-tshark -n -r "$PCAP_FILE" \
-       -o "tls.keys: $SERVER_IP,$MYSQL_PORT,mysql,$SERVER_KEY" \
+WIRESHARK_LOG_LEVEL=debug tshark -n -r "$PCAP_FILE" \
+       -o "ssl.keys_list: $SERVER_IP,$MYSQL_PORT,mysql,$SERVER_KEY" \
        -Y "mysql" -V
 
 EXIT_CODE=$?
+
+# --- CLEANUP & ERROR HANDLING ---
 
 echo "-----------------------------------------------------------------"
 

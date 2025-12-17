@@ -198,6 +198,81 @@ static bool could_be_query(const u_char* data, u_int len)
     );
 }
 
+// The fixed payload length of the SSLRequest packet.
+#define SSL_REQUEST_PAYLOAD_LEN 32
+
+// The length of the MySQL packet header (3 bytes length + 1 byte sequence ID).
+#define MYSQL_HEADER_LEN 4
+
+// The minimum total TCP payload length for an SSLRequest packet.
+#define MIN_PACKET_LEN (MYSQL_HEADER_LEN + SSL_REQUEST_PAYLOAD_LEN)
+
+// The CLIENT_SSL capability flag (0x00000800 or 2048 in decimal).
+#define CLIENT_SSL_FLAG 0x00000800
+
+/**
+ * @brief Decodes a 3-byte little-endian integer (MySQL protocol length field).
+ *
+ * @param bytes Pointer to the first byte of the 3-byte field.
+ * @return uint32_t The decoded length value.
+ */
+static uint32_t decode_3byte_le(const u_char* bytes) {
+    // MySQL protocol uses little-endian for the 3-byte length field
+    return (uint32_t)bytes[0] |
+           ((uint32_t)bytes[1] << 8) |
+           ((uint32_t)bytes[2] << 16);
+}
+
+/**
+ * @brief Decodes a 4-byte little-endian integer (MySQL protocol capabilities field).
+ *
+ * @param bytes Pointer to the first byte of the 4-byte field.
+ * @return uint32_t The decoded capabilities value.
+ */
+static uint32_t decode_4byte_le(const u_char* bytes) {
+    // MySQL protocol uses little-endian for the 4-byte fields
+    return (uint32_t)bytes[0] |
+           ((uint32_t)bytes[1] << 8) |
+           ((uint32_t)bytes[2] << 16) |
+           ((uint32_t)bytes[3] << 24);
+}
+
+/**
+ * @brief Determines if a MySQL packet is a client request to use SSL (SSLRequest).
+ * * Assumes 'data' points to the start of the TCP payload, where the 4-byte
+ * MySQL packet header begins.
+ *
+ * @param data Pointer to the start of the MySQL packet (TCP payload).
+ * @param len Total length of the data buffer.
+ * @return true if the packet is an SSLRequest packet.
+ * @return false otherwise.
+ */
+static bool is_cli_ssl_handshake(const u_char* data, u_int len) {
+    // 1. Check minimum required length (Header 4 bytes + Payload 32 bytes)
+    if (len < MIN_PACKET_LEN) {
+        return false;
+    }
+
+    // 2. Check the payload length field (bytes 0, 1, 2 of the packet)
+    uint32_t payload_len = decode_3byte_le(data);
+    if (payload_len != SSL_REQUEST_PAYLOAD_LEN) {
+        return false;
+    }
+
+    // 3. Check the Capabilities Flags field (bytes 4-7 of the packet)
+    // The capabilities flags start immediately after the 4-byte header (at offset 4).
+    const u_char* capabilities_start = data + MYSQL_HEADER_LEN;
+    uint32_t capabilities = decode_4byte_le(capabilities_start);
+
+    // 4. Check if the CLIENT_SSL flag (0x800) is set in the capabilities.
+    // The SSLRequest packet MUST have this flag set.
+    if (capabilities & CLIENT_SSL_FLAG) {
+        return true;
+    }
+
+    return false;
+}
+
 bool Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u_char* packet)
 {
     int tcp_header_len;
@@ -262,6 +337,11 @@ bool Mysql_stream_manager::process_pkt(const struct pcap_pkthdr* header, const u
 
     //fprintf(stderr, "key=%llu in=%d len=%u could be query = %d\n", key, in, len, could_be_query(data, len));
 
+    if (in && is_cli_ssl_handshake(data, len))
+    {
+        fprintf(stderr, "Warning: Detected SSL connection, will not be able to decrypt\n");
+        return false;
+    }
 
     Mysql_stream *s;
     std::map<u_longlong, Mysql_stream*>::iterator it;
