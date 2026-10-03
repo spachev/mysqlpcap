@@ -72,7 +72,7 @@ public:
 
 struct Mysql_query_packet_time_cmp
 {
-    bool operator()(const Mysql_query_packet* p1, const Mysql_query_packet* p2)
+    bool operator()(const Mysql_query_packet* p1, const Mysql_query_packet* p2) const
     {
         return p1->exec_time > p2->exec_time;
     }
